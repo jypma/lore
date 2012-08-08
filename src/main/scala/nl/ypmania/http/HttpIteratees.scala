@@ -15,6 +15,8 @@ case class Header(name: String, value: String)
 object HttpConstants {
   val SP = ByteString(" ")
   val HT = ByteString("\t")
+  val CR = ByteString("\r")
+  val LF = ByteString("\n")
   val CRLF = ByteString("\r\n")
   val COLON = ByteString(":")
   val PERCENT = ByteString("%")
@@ -27,6 +29,10 @@ object HttpConstants {
 object HttpIteratees {
   import HttpConstants._
 
+  def dropCR (bytes: ByteString) = {
+    if (bytes.last == 13) bytes.slice(0, bytes.size - 1); else bytes;
+  }
+  
   def readRequest =
     for {
       requestLine <- readRequestLine
@@ -43,9 +49,11 @@ object HttpIteratees {
     for {
       meth <- IO takeUntil SP
       uri <- readRequestURI
-      _ <- IO takeUntil SP // ignore the rest
-      httpver <- IO takeUntil CRLF
-    } yield (ascii(meth), uri, ascii(httpver))
+      delim <- IO takeWhile { b => b != 32 && b != 10}
+      end <- IO take 1
+      httpVerIter = if (end(0) == 10) IO Done ByteString("none"); else IO takeUntil LF
+      httpver <- httpVerIter
+    } yield (ascii(meth), uri, ascii(dropCR(httpver)))
   //#read-request-line
 
   //#read-request-uri
@@ -102,22 +110,22 @@ object HttpIteratees {
   //#read-headers
   def readHeaders = {
     def step(found: List[Header]): IO.Iteratee[List[Header]] = {
-      IO peek 2 flatMap {
-        case CRLF => IO takeUntil CRLF flatMap (_ => IO Done found)
+      IO peek 1 flatMap {
+        case LF => IO takeUntil LF flatMap (_ => IO Done found)
+        case CR => IO takeUntil LF flatMap (_ => IO Done found)
         case _    => readHeader flatMap (header => step(header :: found))
       }
     }
     step(Nil)
   }
 
-  def readHeader =
-    for {
-      name <- IO takeUntil COLON
-      value <- IO takeUntil CRLF flatMap readMultiLineValue
-    } yield Header(ascii(name), ascii(value))
+  def readHeader = for {
+    name <- IO takeUntil COLON
+    value <- IO takeUntil LF flatMap { initial => readMultiLineValue(dropCR(initial)) }
+  } yield Header(ascii(name), ascii(value))
 
   def readMultiLineValue(initial: ByteString): IO.Iteratee[ByteString] = IO peek 1 flatMap {
-    case SP => IO takeUntil CRLF flatMap (bytes => readMultiLineValue(initial ++ bytes))
+    case SP => IO takeUntil LF flatMap (bytes => readMultiLineValue(initial ++ dropCR(bytes)))
     case _  => IO Done initial
   }
   //#read-headers
