@@ -7,8 +7,8 @@ import java.net.InetSocketAddress
 //#imports
 
 //#request-class
-case class Request(meth: String, path: List[String], query: Option[String], httpver: String, headers: List[Header], body: Option[ByteString])
 case class Header(name: String, value: String)
+case class Request(meth: String, path: List[String], query: Map[String,String], httpver: String, headers: List[Header], body: Option[ByteString])
 //#request-class
 
 //#constants
@@ -22,6 +22,8 @@ object HttpConstants {
   val PERCENT = ByteString("%")
   val PATH = ByteString("/")
   val QUERY = ByteString("?")
+  val EQUALS = ByteString("=")
+  val AMP = ByteString("&")
 }
 //#constants
 
@@ -81,19 +83,40 @@ object HttpIteratees {
   //#read-path
 
   //#read-query
-  def readQuery: IO.Iteratee[Option[String]] = IO peek 1 flatMap {
-    case QUERY => IO drop 1 flatMap (_ => readUriPart(querychar) map (Some(_)))
-    case _     => IO Done None
+  def readQuery: IO.Iteratee[Map[String,String]] = {
+    def readNameValue(q: Map[String,String]): IO.Iteratee[Map[String,String]] = {
+      readUriPart(querynamechar) flatMap { name =>
+        IO take 1 flatMap {
+          case EQUALS => readUriPart(queryvaluechar) flatMap { value =>
+            IO take 1 flatMap {
+              case AMP => readNameValue (q + (name -> value))
+              case _ => IO Done q + (name -> value)
+            }
+          }
+          case AMP => readNameValue (q + (name -> ""))
+          case _ => IO Done q + (name -> "")
+        }
+      }      
+    }
+    
+    IO peek 1 flatMap {
+      case QUERY => IO drop 1 flatMap (_ => readNameValue(Map.empty))
+      case _     => IO Done Map.empty
+    }
   }
   //#read-query
-
+  
   //#read-uri-part
   val alpha = Set.empty ++ ('a' to 'z') ++ ('A' to 'Z') map (_.toByte)
   val digit = Set.empty ++ ('0' to '9') map (_.toByte)
   val hexdigit = digit ++ (Set.empty ++ ('a' to 'f') ++ ('A' to 'F') map (_.toByte))
-  val subdelim = Set('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=') map (_.toByte)
-  val pathchar = alpha ++ digit ++ subdelim ++ (Set(':', '@') map (_.toByte))
-  val querychar = pathchar ++ (Set('/', '?') map (_.toByte))
+  val subdelim = Set('!', '$', '\'', '(', ')', '*', '+', ',', ';') map (_.toByte)
+  val urichar = alpha ++ digit ++ subdelim ++ (Set(':', '@') map (_.toByte))
+  val pathchar = urichar ++ Set('=', '&').map (_.toByte)
+  
+  val querychar = urichar ++ (Set('/', '?') map (_.toByte))
+  val querynamechar = querychar
+  val queryvaluechar = querychar ++ (Set('=') map (_.toByte))
 
   def readUriPart(allowed: Set[Byte]): IO.Iteratee[String] = for {
     str <- IO takeWhile allowed map ascii
