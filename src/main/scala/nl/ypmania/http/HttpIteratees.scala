@@ -8,7 +8,18 @@ import java.net.InetSocketAddress
 
 //#request-class
 case class Header(name: String, value: String)
-case class Request(meth: String, path: List[String], query: Map[String,String], httpver: String, headers: List[Header], body: Option[ByteString])
+
+trait Request {
+  val path: List[String]
+  val query: Map[String,String]
+  val headers: List[Header]
+}
+
+case class GET(path: List[String], query: Map[String,String], headers: List[Header]) extends Request
+case class PUT(path: List[String], query: Map[String,String], body: Option[ByteString], headers: List[Header])  extends Request
+case class POST(path: List[String], query: Map[String,String], body: Option[ByteString], headers: List[Header])  extends Request
+case class DELETE(path: List[String], query: Map[String,String], headers: List[Header])  extends Request
+
 //#request-class
 
 //#constants
@@ -32,6 +43,7 @@ object HttpIteratees {
   import HttpConstants._
 
   def dropCR (bytes: ByteString) = {
+    println("dropCR: " + bytes + " / " + bytes.utf8String);
     if (bytes.last == 13) bytes.slice(0, bytes.size - 1); else bytes;
   }
   
@@ -41,13 +53,22 @@ object HttpIteratees {
       (meth, (path, query), httpver) = requestLine
       headers <- readHeaders
       body <- readBody(headers)
-    } yield Request(meth, path, query, httpver, headers, body)
+    } yield {
+      meth match {
+        case "GET" => GET(path, query, headers) 
+        case "PUT" => PUT(path, query, body, headers) 
+        case "POST" => POST(path, query, body, headers) 
+        case "DELETE" => DELETE(path, query, headers)
+        case _ => sys.error ("Unknown method: " + meth)
+      }
+    }
   //#read-request
 
   //#read-request-line
   def ascii(bytes: ByteString): String = bytes.decodeString("US-ASCII").trim
 
-  def readRequestLine =
+  def readRequestLine = {
+    println("readRequestLine")
     for {
       meth <- IO takeUntil SP
       uri <- readRequestURI
@@ -57,16 +78,18 @@ object HttpIteratees {
       httpver <- httpVerIter
     } yield (ascii(meth), uri, ascii(dropCR(httpver)))
   //#read-request-line
+  }
 
   //#read-request-uri
-  def readRequestURI = IO peek 1 flatMap {
+  def readRequestURI = {println ("readRequestURI"); new Exception().printStackTrace(); IO peek 1 flatMap {
     case PATH =>
+      println("got PATH")
       for {
         path <- readPath
         query <- readQuery
       } yield (path, query)
-    case _ => sys.error("Not Implemented")
-  }
+    case other => sys.error("foo")
+  }}
   //#read-request-uri
 
   //#read-path
