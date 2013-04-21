@@ -1,0 +1,69 @@
+header
+  pagesize
+  free: freelist page (in memory)
+  branches: btree node page (branch)
+  commands: btree ID -> commands
+
+freelist page
+  next: freelist page
+  pagenumber * (either free page, or less than 0.5 full other page)
+
+free page
+  (no data)
+
+btree node page (branch)
+  (key is ID)
+  type: internal / leaf
+  first: pagenumber (internal -> btree node page (branch), leaf -> branches)
+  [
+    key: ID
+    next: pagenumber (internal -> btree node page (branch), leaf -> branches)
+  ] *
+  
+branches
+  [
+    id: ID
+    parentbranch: ID
+    parentcommand: ID
+    commands: btree node page (commands)
+    sub_idx: btree subID -> preID -> objID -> commandlist
+    pre_idx:
+    obj_idx:
+    
+  ] *
+  
+commandlist
+  [
+    key: ID (obj)
+    commands: [
+      id: ID
+      prev: commandlist
+      [ mergedId: ID (command) ]+
+    ] *
+  ] *
+
+btree node page (commands)
+  (key is ID)
+  type: internal / leaf
+  first: pagenumber (internal -> btree node page (commands), leaf -> commands)
+  [
+    key: ID
+    next: pagenumber 
+  ] *
+  
+Value: size <= (pagesize / 128): inline. Otherwise: (pagenumber: values, idx).
+  
+commands
+  [
+    id: ID
+    add: [ sub, pre, obj: ID ] *
+    del: [ sub, pre, obj: ID ] *
+    set: [ sub, pro: ID, value: Value ] *
+    clr: [ sub, pro: ID ] *
+  ] *
+  
+values
+  [
+    part: bytes
+    next: (pagenumber: values, idx)
+  ] *
