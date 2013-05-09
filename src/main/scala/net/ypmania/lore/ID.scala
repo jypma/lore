@@ -4,6 +4,9 @@ import java.security.MessageDigest
 import java.net.NetworkInterface
 import scala.collection.JavaConversions._
 import net.ypmania.io.IO
+import akka.util.ByteStringBuilder
+import java.nio.ByteOrder
+import akka.util.ByteIterator
 
 case class ID (l1: Long, l2: Long) extends Ordered[ID] {
   import ID._
@@ -16,12 +19,23 @@ case class ID (l1: Long, l2: Long) extends Ordered[ID] {
       else
         d1)
   }
+  
+  def putInto(bs: ByteStringBuilder)(implicit order: ByteOrder) {
+    bs.putLong(l1)
+    bs.putLong(l2)
+  }
 }
 
 object ID {
   def forBranch = forType(1)
   def forChange = forType(2)
   def forMerge = forType(3)
+  
+  def getFrom(i:ByteIterator)(implicit order: ByteOrder) = {
+    val l1 = i.getLong
+    val l2 = i.getLong
+    new ID(l1, l2)
+  }
   
   private def forType(t:Int) = ID(time, node | t) 
   

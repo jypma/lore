@@ -21,4 +21,9 @@ object IO {
      (buf(ofs+7) & 0xFF).asInstanceOf[Long]
   
   private def toInt(b:ByteString) = b.asByteBuffer.getInt
+  
+  object SizeOf {
+    val Int = 4
+    val PageIdx = Int
+  }
 }

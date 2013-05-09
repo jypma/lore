@@ -12,6 +12,9 @@ libraryDependencies += "com.typesafe.akka" % "akka-testkit_2.10" % "2.1.0" % "te
             
 libraryDependencies += "org.scalatest" % "scalatest_2.10" % "2.0.M5b" % "test"
 
+libraryDependencies += "com.typesafe" % "scalalogging-slf4j_2.10" % "1.0.1"
+            
+
 EclipseKeys.withSource := true
 
 EclipseKeys.createSrc := EclipseCreateSrc.Default + EclipseCreateSrc.Resource
