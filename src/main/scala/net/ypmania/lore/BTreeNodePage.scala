@@ -5,10 +5,14 @@ import akka.util.ByteString
 import scala.collection.immutable.VectorBuilder
 
 case class BTreeNodePage(leaf: Boolean, firstPage: Int, pointers: Vector[(ID, Int)]) {
-
+  // maybe split up in two subclasses, since:
+     // internal pages have indeed firstpage and (ID, pageidx)*
+     // leaf pages have (ID, pageidx*) and nextPage: pageidx
 }
 
 object BTreeNodePage {
+  val empty = BTreeNodePage(true, -1, Vector.empty)
+  
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
 
   class Type extends PagedFile.PageType[BTreeNodePage] {

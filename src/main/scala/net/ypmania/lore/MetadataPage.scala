@@ -9,22 +9,24 @@ case class MetadataPage(firstFreeList: PageIdx, branches: PageIdx, commands: Pag
 }
 
 object MetadataPage {
+  val emptyDb = MetadataPage(PageIdx(1), PageIdx(2), PageIdx(3))
+  
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
   
-  class Type extends PagedFile.PageType[MetadataPage] {
+  object Type extends PagedFile.PageType[MetadataPage] {
     def read(bytes: ByteString) = {
       val i = bytes.iterator
-      val firstFreeList= i.getInt
-      val branches = i.getInt
-      val commands = i.getInt
+      val firstFreeList= PageIdx.get(i)
+      val branches = PageIdx.get(i)
+      val commands = PageIdx.get(i)
       MetadataPage(firstFreeList, branches, commands)
     }
     
     def write(page: MetadataPage) = {
       val bs = ByteString.newBuilder
-      bs.putInt(page.firstFreeList)
-      bs.putInt(page.branches)
-      bs.putInt(page.commands)
+      page.firstFreeList.put(bs)
+      page.branches.put(bs)
+      page.commands.put(bs)
       bs.result
     }
   }

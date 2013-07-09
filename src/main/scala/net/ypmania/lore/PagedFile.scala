@@ -32,14 +32,15 @@ class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeade
       context.actorOf(Props(new Reader(replyTo, read)))
   }
   
-  class Reader(requestor: ActorRef, read: Read[_]) extends Actor with ActorLogging {
+  class Reader(requestor: ActorRef, read: Read[_ <: AnyRef]) extends Actor with ActorLogging {
     override def preStart {
-      val pos = journalIndex.binarySearch(read.page)
+      val pos = journalIndex.lastIndexOf(read.page)
       if (pos > 0) {
-        journalFile ! FileActor.Read(journalHeader.offsetForPageContent(pos), pageSize)
+        journalFile ! FileActor.Read(journalHeader.offsetForPageContent(PageIdx(pos)), pageSize)
       } else {
         if (read.page >= pageCount) {
-          throw new Exception (s"Trying to read page ${read.page} but have only ${pageCount}")
+          requestor ! PagedFile.PageNotFound(read.ctx)
+          context.stop(self)
         } else {
           dataFile ! FileActor.Read(dataHeader.offsetForPage(read.page), pageSize)
         }
@@ -48,7 +49,7 @@ class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeade
     
     def receive = {
       case FileActor.ReadCompleted(bytes, _) =>
-        requestor ! read.pageType.read(bytes)
+        requestor ! PagedFile.ReadCompleted(read.pageType.read(bytes), read.ctx)
       case other =>
         log.error("Dropping: {}", other)
         
@@ -57,15 +58,16 @@ class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeade
 }
 
 object PagedFile {
-  type PageIdx = Int
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
   
-  trait PageType[T] {
+  trait PageType[T <: AnyRef] {
     def read(page: ByteString): T
     def write(page: T): ByteString
   }
   
-  case class Read[T](page: PageIdx, pageType: PageType[T])
+  case class Read[T <: AnyRef](page: PageIdx, pageType: PageType[T], ctx: AnyRef = None)
+  case class ReadCompleted(content: AnyRef, ctx: AnyRef)
+  case class PageNotFound(ctx: AnyRef)
   
   val defaultPageSize = 64 * 1024
   
@@ -79,7 +81,7 @@ object PagedFile {
       bs.result
     }
     def offsetForPage(page: PageIdx) = DataHeader.size + (page * pageSize)
-    def pageCount(fileSize: Long): PageIdx = ((fileSize - DataHeader.size) / pageSize).toInt
+    def pageCount(fileSize: Long): PageIdx = new PageIdx(((fileSize - DataHeader.size) / pageSize).toInt)
   }
   object DataHeader {
     private val defaultMagic = "lore-db4".getBytes("UTF-8")
@@ -106,10 +108,10 @@ object PagedFile {
         println("corrupt journal file size")
         throw new Exception ("Corrupt journal file size: " + filesize)
       }
-      (filesize - JournalHeader.size) / bytesPerPage
+      PageIdx(((filesize - JournalHeader.size) / bytesPerPage).toInt)
     }
-    def offsetForPageIdx(page: Int) = JournalHeader.size + (page * bytesPerPage)
-    def offsetForPageContent(page: Int) = JournalHeader.size + (page * bytesPerPage) + SizeOf.PageIdx
+    def offsetForPageIdx(page: PageIdx) = JournalHeader.size + (page * bytesPerPage)
+    def offsetForPageContent(page: PageIdx) = JournalHeader.size + (page * bytesPerPage) + SizeOf.PageIdx
   }
   object JournalHeader {
     private val defaultMagic = "lore-jr4".getBytes("UTF-8")
@@ -131,8 +133,8 @@ object PagedFile {
     private var dataFile: ActorRef = _
     private var journalFile: ActorRef = _
     private val journalIndex = new VectorBuilder[PageIdx]
-    private var journalPages: Long = 0
-    private var journalPageIdx: PageIdx = 0
+    private var journalPages = PageIdx(0)
+    private var journalPageIdx = PageIdx(0)
     private var journalFileSize: Long = 0
     private var journalHeader: JournalHeader = _
     private var dataHeader: DataHeader = _
@@ -176,7 +178,7 @@ object PagedFile {
         journalFile ! FileActor.Write(0, new JournalHeader().toByteString)
         journalFile ! FileActor.Sync()
         val pagedFile = context.system.actorOf(Props(new PagedFile(
-            dataFile, journalFile, DataHeader(), JournalHeader(), Vector.empty, 0)))
+            dataFile, journalFile, DataHeader(), JournalHeader(), Vector.empty, PageIdx(0))))
         requestor ! pagedFile
         context.stop(self)        
       }
@@ -229,7 +231,7 @@ object PagedFile {
       
       case FileActor.ReadCompleted(bytes, ReadJournalPage) =>
         log.debug("Read journal page")
-        journalIndex += bytes.iterator.getInt
+        journalIndex += PageIdx.get(bytes.iterator)
         journalPageIdx += 1
         readJournal
         
