@@ -1,12 +1,9 @@
 package net.ypmania.io
 
-import akka.actor.IO._
 import akka.util.ByteString
 import net.ypmania.lore.ID
 
 object IO {
-  val takeInt = take(4) map toInt
-  
   def toID(buf: Array[Byte], ofs:Int) =
     ID(toLong(buf, ofs), toLong(buf, ofs + 8))
   

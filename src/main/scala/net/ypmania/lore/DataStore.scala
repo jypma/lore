@@ -18,7 +18,7 @@ object DataStore {
     private var pagedFile: ActorRef = _
     
     override def preStart {
-      context.actorOf(Props(new PagedFile.Opener(self, filename)))
+      context.actorOf(Props(classOf[PagedFile.Opener], self, filename))
     }
     
     def receive = {

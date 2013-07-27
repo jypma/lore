@@ -17,12 +17,12 @@ class PagedFileSpec extends TestKit(ActorSystem("Test")) with WordSpec with Shou
   
   "a paged file" should {
     "be able to open a cleanly created new db" in new Fixture {
-      system.actorOf(Props(new PagedFile.Opener(testActor, filename)))
+      system.actorOf(Props(classOf[PagedFile.Opener], testActor, filename))
       expectMsgType[ActorRef]
       eventually {
         new File(filename).length should not be (0)
       }
-      system.actorOf(Props(new PagedFile.Opener(testActor, filename)))
+      system.actorOf(Props(classOf[PagedFile.Opener], testActor, filename))
       val createdFile = expectMsgType[ActorRef]
       new File(filename) should be ('exists)      
     }

@@ -1,12 +1,14 @@
 header
   pagesize
-  free: freelist page (in memory)
-  branches: btree node page (branch)
-  commands: btree ID -> commands
+  firstfree: freelist page (in memory)
+  branchesIdx: btree node page (branch)
+  lastBranches: last branches storage page
+  commandsIdx: btree ID -> commands
 
 freelist page
   next: freelist page
-  pagenumber * (either free page, or less than 0.5 full other page)
+  
+  commandlist * (less than 0.9 full page)
 
 free page
   (no data)
@@ -26,20 +28,22 @@ branches
     parentbranch: ID
     parentcommand: ID
     commands: btree node page (commands)
-    sub_idx: btree subID -> preID -> objID -> commandlist
-    pre_idx:
-    obj_idx:
+    sub_idx: btree subID -> preID -> commandlist
+    pre_idx: // later
+    obj_idx: // later
     
   ] *
   
 commandlist
   [
-    key: ID (obj)
+    branch: ID
+    key1: ID (e.g. sub)
+    key2: ID (e.g. pre)
     commands: [
       id: ID
-      prev: commandlist
-      [ mergedId: ID (command) ]+
+      [ mergedId: ID (command) ]+ // the command that merged in this command into the branch
     ] *
+    prev: commandlist // rest of earlier commands in case of page overflow
   ] *
 
 btree node page (commands)

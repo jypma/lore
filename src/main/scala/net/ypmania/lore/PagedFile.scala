@@ -29,7 +29,7 @@ class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeade
   def receive = {
     case read:Read[_] =>
       val replyTo = sender
-      context.actorOf(Props(new Reader(replyTo, read)))
+      context.actorOf(Props(classOf[Reader], replyTo, read))
   }
   
   class Reader(requestor: ActorRef, read: Read[_ <: AnyRef]) extends Actor with ActorLogging {
@@ -64,6 +64,10 @@ object PagedFile {
     def read(page: ByteString): T
     def write(page: T): ByteString
   }
+  
+  def props (dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
+                initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) =
+    Props(classOf[PagedFile], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt)
   
   case class Read[T <: AnyRef](page: PageIdx, pageType: PageType[T], ctx: AnyRef = None)
   case class ReadCompleted(content: AnyRef, ctx: AnyRef)
@@ -142,7 +146,7 @@ object PagedFile {
     private var dataFileSize:Long = 0
     
     override def preStart {
-      val io = context.actorOf(Props(new FileActor.IO))
+      val io = context.actorOf(Props[FileActor.IO])
       io ! FileActor.IO.Open(Paths.get(filename), Seq(READ, WRITE, CREATE), DataOpen)
       io ! FileActor.IO.Open(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE), JournalOpen)
     }
@@ -155,8 +159,8 @@ object PagedFile {
         log.debug("journal file: {}", journalFile)
         log.debug("page size: {}", dataHeader.pageSize)
         log.debug("journal index: {}", journalIndex.result)
-        val pagedFile = context.system.actorOf(Props(new PagedFile(
-            dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, dataHeader.pageCount(dataFileSize))))
+        val pagedFile = context.system.actorOf(props( 
+            dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, dataHeader.pageCount(dataFileSize)))
         requestor ! pagedFile
         context.stop(self)
       }
@@ -168,6 +172,8 @@ object PagedFile {
           log.debug("mismatched page size")
           throw new Exception (s"Data file page size ${dataHeader.pageSize} but journal has ${journalHeader.pageSize}")
         }
+        journalPages = journalHeader.pageCountWithFileSize(journalFileSize) 
+        readJournal        
       }
     }
     
@@ -177,8 +183,8 @@ object PagedFile {
         dataFile ! FileActor.Sync()
         journalFile ! FileActor.Write(0, new JournalHeader().toByteString)
         journalFile ! FileActor.Sync()
-        val pagedFile = context.system.actorOf(Props(new PagedFile(
-            dataFile, journalFile, DataHeader(), JournalHeader(), Vector.empty, PageIdx(0))))
+        val pagedFile = context.system.actorOf(props( 
+            dataFile, journalFile, DataHeader(), JournalHeader(), Vector.empty, PageIdx(0)))
         requestor ! pagedFile
         context.stop(self)        
       }
@@ -226,8 +232,6 @@ object PagedFile {
           throw new Exception("journal missing file magic")
         }
         validate
-        journalPages = journalHeader.pageCountWithFileSize(journalFileSize) 
-        readJournal
       
       case FileActor.ReadCompleted(bytes, ReadJournalPage) =>
         log.debug("Read journal page")

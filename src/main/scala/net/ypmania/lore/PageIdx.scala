@@ -13,6 +13,8 @@ class PageIdx (val idx: Int) extends AnyVal {
   def put (bs: ByteStringBuilder)(implicit byteOrder: ByteOrder) {
     bs.putInt(idx)
   }
+  
+  def toInt = idx
 }
 
 object PageIdx {
