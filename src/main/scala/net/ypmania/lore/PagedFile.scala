@@ -19,59 +19,107 @@ import akka.actor.PoisonPill
 import akka.util.ByteStringBuilder
 import akka.actor.ActorLogging
 
+//TODO rename to PagedStorage
 class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
-                initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) extends Actor {
-  import BinarySearch._
+                initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) extends Actor with ActorLogging {
+
   val pageSize = dataHeader.pageSize
   var journalIndex = initialJournalIndex
   var pageCount = initialPages
   
-  def receive = {
-    case read:Read[_] =>
-      val replyTo = sender
-      context.actorOf(Props(classOf[Reader], replyTo, read))
-  }
+  case class WriteQueueEntry (sender: ActorRef, write: Write)
+  case class Reading(sender: ActorRef, read: Read)
   
-  class Reader(requestor: ActorRef, read: Read[_ <: AnyRef]) extends Actor with ActorLogging {
-    override def preStart {
-      val pos = journalIndex.lastIndexOf(read.page)
-      if (pos > 0) {
-        journalFile ! FileActor.Read(journalHeader.offsetForPageContent(PageIdx(pos)), pageSize)
-      } else {
-        if (read.page >= pageCount) {
-          requestor ! PagedFile.PageNotFound(read.ctx)
-          context.stop(self)
+  var writeQueue = Vector.empty[WriteQueueEntry]
+  var writing = collection.mutable.Map.empty[PageIdx,ByteString]
+
+  def receive = {
+    case read:Read =>
+      if (read.page >= pageCount) 
+        throw new Exception (s"Trying to read page ${read.page} but only have ${pageCount}")
+      writing.get(read.page).map { contentBeingWritten =>
+        log.debug(s"Replying to ${sender}")
+        sender ! ReadCompleted(contentBeingWritten, read.ctx)
+      }.getOrElse {
+        //performance: also keep a reverse journal Index of "latest page"
+        val journalPage = journalIndex.lastIndexWhere(_ == read.page)
+        if (journalPage != -1) {
+          val pos = journalHeader.offsetForPageContent(PageIdx(journalPage))
+          journalFile ! FileActor.Read(pos, journalHeader.pageSize, Reading(sender, read))
         } else {
-          dataFile ! FileActor.Read(dataHeader.offsetForPage(read.page), pageSize)
+          val pos = dataHeader.offsetForPage(read.page)
+          dataFile ! FileActor.Read(pos, dataHeader.pageSize, Reading(sender, read))
         }
       }
+      
+    case FileActor.ReadCompleted(content, Reading(replyTo, read)) =>  
+     replyTo ! ReadCompleted(content, read.ctx)
+      
+    case write:Write =>
+      if (write.content.length > journalHeader.pageSize) 
+        throw new Exception(s"Content length ${write.content.length} overflows page size ${journalHeader.pageSize}")
+      val q = WriteQueueEntry(sender, write)
+      if (writing.isEmpty) {
+        performWrite(q)
+      } else {
+        writeQueue :+= q
+      }
+      
+    case FileActor.WriteCompleted(WriteQueueEntry(replyTo, write)) =>
+      replyTo ! WriteCompleted(write.ctx)
+      writing.remove(write.page)
+      if (writing.isEmpty) {
+        emptyWriteQueue()
+      }
+
+    case other =>
+      log.error("Dropping {}", other)
+  }
+  
+  def performWrite(q: WriteQueueEntry) {
+    val journalIdx = PageIdx(journalIndex.size)
+    val pos = journalHeader.offsetForPageIdx(journalIdx)
+    
+    val pageIdxBytes = ByteString.newBuilder
+    q.write.page.put(pageIdxBytes)(byteOrder)
+    if (q.write.page >= pageCount) {
+      pageCount = q.write.page + 1
     }
     
-    def receive = {
-      case FileActor.ReadCompleted(bytes, _) =>
-        requestor ! PagedFile.ReadCompleted(read.pageType.read(bytes), read.ctx)
-      case other =>
-        log.error("Dropping: {}", other)
-        
-    }
+    val idxAndContent = pageIdxBytes.result ++ q.write.content
+    
+    journalFile ! FileActor.Write(pos, idxAndContent, q)
+    writing(q.write.page) = q.write.content
+    journalIndex :+= q.write.page
   }
+  
+  def emptyWriteQueue() {
+    writeQueue.map(q => q.write.page -> q).toMap.values.foreach(performWrite)    
+    writeQueue = Vector.empty
+  }
+  
 }
 
 object PagedFile {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
   
+  //TODO move away into StructuredPagedFile
   trait PageType[T <: AnyRef] {
-    def read(page: ByteString): T
-    def write(page: T): ByteString
+    implicit val byteOrder = PagedFile.byteOrder
+    
+    def fromByteString(page: ByteString): T
+    def toByteString(page: T): ByteString
   }
   
   def props (dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
                 initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) =
     Props(classOf[PagedFile], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt)
   
-  case class Read[T <: AnyRef](page: PageIdx, pageType: PageType[T], ctx: AnyRef = None)
-  case class ReadCompleted(content: AnyRef, ctx: AnyRef)
-  case class PageNotFound(ctx: AnyRef)
+  case class Read(page: PageIdx, ctx: AnyRef = None)
+  case class ReadCompleted(content: ByteString, ctx: AnyRef)
+  
+  case class Write(page: PageIdx, content: ByteString, ctx: AnyRef = None)
+  case class WriteCompleted(ctx: AnyRef)
   
   val defaultPageSize = 64 * 1024
   
@@ -90,7 +138,7 @@ object PagedFile {
   object DataHeader {
     private val defaultMagic = "lore-db4".getBytes("UTF-8")
     val size = defaultMagic.length + SizeOf.Int
-    def read(i: ByteIterator) = {
+    def apply(i: ByteIterator) = {
       val magic = new Array[Byte](defaultMagic.length)
       i.getBytes(magic)      
       new DataHeader(magic, i.getInt)
@@ -120,13 +168,14 @@ object PagedFile {
   object JournalHeader {
     private val defaultMagic = "lore-jr4".getBytes("UTF-8")
     val size = defaultMagic.length + SizeOf.Int    
-    def read(i: ByteIterator) = {
+    def apply(i: ByteIterator) = {
       val magic = new Array[Byte](defaultMagic.length)
       i.getBytes(magic)      
       new JournalHeader(magic, i.getInt)
     }
   }
   
+  //TODO introduce StorageManager, so you can do IO(Storage) ? Open(...)
   class Opener(requestor: ActorRef, filename: String) extends Actor with ActorLogging {
     case object DataOpen
     case object JournalOpen
@@ -205,7 +254,7 @@ object PagedFile {
       
       case FileActor.ReadCompleted(bytes, ReadDataHeader) =>
         log.debug("Read data header with {} bytes", bytes.length)
-        dataHeader = DataHeader.read(bytes.iterator)
+        dataHeader = DataHeader(bytes.iterator)
         if (!dataHeader.valid) {
           log.debug("data file invalid")
           throw new Exception("data file invalid")
@@ -226,7 +275,7 @@ object PagedFile {
         
       case FileActor.ReadCompleted(bytes, ReadJournalHeader) =>
         log.debug("Read journal header with {} bytes", bytes.length)
-        journalHeader = JournalHeader.read(bytes.iterator)
+        journalHeader = JournalHeader(bytes.iterator)
         if (!journalHeader.valid) {
           log.debug("journal missing file magic")
           throw new Exception("journal missing file magic")

@@ -26,11 +26,11 @@ object DataStore {
         this.pagedFile = pagedFile
         pagedFile ! PagedFile.Read(PageIdx(0), MetadataPage.Type)
         
-      case PagedFile.PageNotFound(_) =>
-        val meta = MetadataPage.emptyDb
-        val free = FreeListPage.empty
-        val branchesIdx = BTreeNodePage.empty
-        val commandsIdx = BTreeNodePage.empty 
+      //case PagedFile.PageNotFound(_) =>
+      //  val meta = MetadataPage.emptyDb
+      //  val free = FreeListPage.empty
+      //  val branchesIdx = BTreeNodePage.empty
+      //  val commandsIdx = BTreeNodePage.empty 
         
         // build empty btree for commands etc., and metadata page, and store.
         

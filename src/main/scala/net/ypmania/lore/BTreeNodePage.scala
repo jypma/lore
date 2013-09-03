@@ -13,10 +13,8 @@ case class BTreeNodePage(leaf: Boolean, firstPage: Int, pointers: Vector[(ID, In
 object BTreeNodePage {
   val empty = BTreeNodePage(true, -1, Vector.empty)
   
-  implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
-
-  class Type extends PagedFile.PageType[BTreeNodePage] {
-    def read(bytes: ByteString) = {
+  object Type extends PagedFile.PageType[BTreeNodePage] {
+    def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val t = i.getByte
       val leaf = (t == 0) 
@@ -31,7 +29,7 @@ object BTreeNodePage {
       BTreeNodePage(leaf, firstPage, pointers.result)
     }
     
-    def write(page: BTreeNodePage) = {
+    def toByteString(page: BTreeNodePage) = {
       val bs = ByteString.newBuilder
       bs.putByte(if (page.leaf) 0 else 1)
       bs.putInt(page.firstPage)

@@ -10,10 +10,8 @@ case class FreeListPage(nextFreeListPage: Int, pages: Array[Int]) {
 object FreeListPage {
   val empty = FreeListPage(-1, Array.empty)
   
-  implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
-  
-  class Type extends PagedFile.PageType[FreeListPage] {
-    def read(bytes: ByteString) = {
+  object Type extends PagedFile.PageType[FreeListPage] {
+    def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val nextFreeListPage = i.getInt
       val n_pages = i.getInt
@@ -22,7 +20,7 @@ object FreeListPage {
       FreeListPage(nextFreeListPage, pages)
     }
     
-    def write(page: FreeListPage) = {
+    def toByteString(page: FreeListPage) = {
       val bs = ByteString.newBuilder
       bs.putInt(page.nextFreeListPage)
       bs.putInt(page.pages.size)

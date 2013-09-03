@@ -4,9 +4,7 @@ import akka.util.ByteIterator
 import java.nio.ByteOrder
 import akka.util.ByteStringBuilder
 
-class PageIdx (val idx: Int) extends AnyVal {
-  def < (that: PageIdx) = idx < that.idx
-  def >= (that: PageIdx) = idx >= that.idx
+class PageIdx (val idx: Int) extends AnyVal with Ordered[PageIdx] {
   def * (bytesPerPage: Int) = idx * bytesPerPage
   def + (that: Int) = new PageIdx(idx + that)
   
@@ -15,6 +13,8 @@ class PageIdx (val idx: Int) extends AnyVal {
   }
   
   def toInt = idx
+  
+  def compare(that: PageIdx) = idx - that.idx
 }
 
 object PageIdx {
