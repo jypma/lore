@@ -1,7 +1,7 @@
 package net.ypmania.lore
 
-import org.scalatest.WordSpec
-import org.scalatest.matchers.ShouldMatchers
+import org.scalatest.WordSpecLike
+import org.scalatest.Matchers
 import akka.actor.ActorSystem
 import java.io.File
 import akka.testkit.TestKit
@@ -10,7 +10,7 @@ import akka.actor.ActorRef
 import akka.actor.Props
 import org.scalatest.concurrent.Eventually
 
-class PagedFileOpenerSpec extends TestKit(ActorSystem("Test")) with WordSpec with ShouldMatchers with Eventually {
+class PagedFileOpenerSpec extends TestKit(ActorSystem("Test")) with WordSpecLike with Matchers with Eventually {
   class Fixture {
     val filename = "/tmp/PagedFileSpec" + Random.nextInt
   }

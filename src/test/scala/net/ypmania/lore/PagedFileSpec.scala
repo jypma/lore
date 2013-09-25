@@ -1,7 +1,7 @@
 package net.ypmania.lore
 
-import org.scalatest.WordSpec
-import org.scalatest.matchers.ShouldMatchers
+import org.scalatest.WordSpecLike
+import org.scalatest.Matchers
 import akka.actor.ActorSystem
 import java.io.File
 import akka.testkit.TestKit
@@ -17,7 +17,7 @@ import net.ypmania.io.FileActor
 import akka.testkit.ImplicitSender
 
 class PagedFileSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
-                       with WordSpec with ShouldMatchers with Eventually {
+                       with WordSpecLike with Matchers with Eventually {
   class Fixture(val initialPages:Int = 0, val initialJournalIndex:Vector[PageIdx] = Vector.empty[PageIdx])  {
     val dataFile = TestProbe()
     val journalFile = TestProbe()
