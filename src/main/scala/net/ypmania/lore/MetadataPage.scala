@@ -1,6 +1,5 @@
 package net.ypmania.lore
 
-import PagedFile._
 import java.nio.ByteOrder
 import akka.util.ByteString
 
@@ -11,7 +10,7 @@ case class MetadataPage(firstFreeList: PageIdx, branches: PageIdx, commands: Pag
 object MetadataPage {
   val emptyDb = MetadataPage(PageIdx(1), PageIdx(2), PageIdx(3))
   
-  object Type extends PagedFile.PageType[MetadataPage] {
+  object Type extends StructuredStorage.PageType[MetadataPage] {
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val firstFreeList= PageIdx.get(i)

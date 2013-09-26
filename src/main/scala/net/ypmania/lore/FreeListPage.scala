@@ -10,7 +10,7 @@ case class FreeListPage(nextFreeListPage: Int, pages: Array[Int]) {
 object FreeListPage {
   val empty = FreeListPage(-1, Array.empty)
   
-  object Type extends PagedFile.PageType[FreeListPage] {
+  object Type extends StructuredStorage.PageType[FreeListPage] {
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val nextFreeListPage = i.getInt

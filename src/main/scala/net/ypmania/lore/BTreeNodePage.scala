@@ -13,7 +13,7 @@ case class BTreeNodePage(leaf: Boolean, firstPage: Int, pointers: Vector[(ID, In
 object BTreeNodePage {
   val empty = BTreeNodePage(true, -1, Vector.empty)
   
-  object Type extends PagedFile.PageType[BTreeNodePage] {
+  object Type extends StructuredStorage.PageType[BTreeNodePage] {
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val t = i.getByte

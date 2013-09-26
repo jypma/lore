@@ -14,14 +14,13 @@ import akka.util.ByteString
 import scala.collection.immutable.VectorBuilder
 import net.ypmania.io.IO._
 import akka.util.ByteIterator
-import PagedFile._
 import akka.actor.PoisonPill
 import akka.util.ByteStringBuilder
 import akka.actor.ActorLogging
 
-//TODO rename to PagedStorage
-class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
-                initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) extends Actor with ActorLogging {
+import PagedStorage._
+class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
+                   initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) extends Actor with ActorLogging {
 
   val pageSize = dataHeader.pageSize
   var journalIndex = initialJournalIndex
@@ -100,20 +99,12 @@ class PagedFile(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeade
   
 }
 
-object PagedFile {
+object PagedStorage {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
-  
-  //TODO move away into StructuredPagedFile
-  trait PageType[T <: AnyRef] {
-    implicit val byteOrder = PagedFile.byteOrder
-    
-    def fromByteString(page: ByteString): T
-    def toByteString(page: T): ByteString
-  }
   
   def props (dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
                 initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) =
-    Props(classOf[PagedFile], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt)
+    Props(classOf[PagedStorage], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt)
   
   case class Read(page: PageIdx, ctx: AnyRef = None)
   case class ReadCompleted(content: ByteString, ctx: AnyRef)
