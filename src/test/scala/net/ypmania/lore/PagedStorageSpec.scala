@@ -92,6 +92,18 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       hasread.content should be (pageContent)            
     }
     
+    "send out file writes for each page being written, and reply after all writes complete" in new Fixture {
+      f ! PagedStorage.Write(Map(PageIdx(0) -> content, PageIdx(1) -> content))
+      val first = journalFile.expectMsgType[FileActor.Write]
+      first.at should be (PagedStorage.JournalHeader.size)
+      val second = journalFile.expectMsgType[FileActor.Write]
+      second.at should be (first.at + journalHeader.bytesPerPage)
+      
+      journalFile.reply(FileActor.WriteCompleted(first.ctx))
+      journalFile.reply(FileActor.WriteCompleted(second.ctx))
+      expectMsgType[PagedStorage.WriteCompleted]
+    } 
+    
     "put writes into consecutive journal pages" in new Fixture {
       
     }

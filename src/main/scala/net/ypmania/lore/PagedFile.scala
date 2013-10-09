@@ -26,18 +26,27 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
   var journalIndex = initialJournalIndex
   var pageCount = initialPages
   
-  case class WriteQueueEntry (sender: ActorRef, write: Write)
+  case class WriteQueueEntry (sender: ActorRef, write: Write) {
+    private var inProgress = write.pages.size
+    def done = { inProgress <= 0 }
+    def finishPage(page: PageIdx) {
+      if (done) throw new Exception("Decremented more writes than we sent out...")
+      inProgress -= 1;  
+    }
+  }
   case class Reading(sender: ActorRef, read: Read)
+  private case class Writing(entry: WriteQueueEntry, page: PageIdx)
   
   var writeQueue = Vector.empty[WriteQueueEntry]
-  var writing = collection.mutable.Map.empty[PageIdx,ByteString]
+  private var writing = collection.mutable.Map.empty[PageIdx, Writing]
 
   def receive = {
     case read:Read =>
       if (read.page >= pageCount) 
         throw new Exception (s"Trying to read page ${read.page} but only have ${pageCount}")
-      writing.get(read.page).map { contentBeingWritten =>
-        log.debug(s"Replying to ${sender}")
+      writing.get(read.page).map { w =>
+        log.debug(s"Replying in-transit write content to ${sender}")
+        val contentBeingWritten = w.entry.write.pages(read.page)
         sender ! ReadCompleted(contentBeingWritten, read.ctx)
       }.getOrElse {
         //performance: also keep a reverse journal Index of "latest page"
@@ -55,8 +64,10 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
      replyTo ! ReadCompleted(content, read.ctx)
       
     case write:Write =>
-      if (write.content.length > journalHeader.pageSize) 
-        throw new Exception(s"Content length ${write.content.length} overflows page size ${journalHeader.pageSize}")
+      write.pages.foreach { case (page, content) =>
+        if (content.length > journalHeader.pageSize) 
+    	  throw new Exception(s"Content length ${content.length} for page ${page} overflows page size ${journalHeader.pageSize}")
+      }
       val q = WriteQueueEntry(sender, write)
       if (writing.isEmpty) {
         performWrite(q)
@@ -64,36 +75,46 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
         writeQueue :+= q
       }
       
-    case FileActor.WriteCompleted(WriteQueueEntry(replyTo, write)) =>
-      replyTo ! WriteCompleted(write.ctx)
-      writing.remove(write.page)
-      if (writing.isEmpty) {
-        emptyWriteQueue()
+    case FileActor.WriteCompleted(Writing(entry, page)) =>
+      entry.finishPage(page)
+      if (entry.done) {
+        entry.sender ! WriteCompleted(entry.write.ctx)
+        entry.write.pages.keys.foreach(writing.remove)
+        if (writing.isEmpty) {
+          emptyWriteQueue()
+        }
       }
-
+      
     case other =>
       log.error("Dropping {}", other)
   }
   
   def performWrite(q: WriteQueueEntry) {
+    for (page <- q.write.pages.keys) {
+      performWrite(Writing(q, page))
+    }
+  }
+  
+  def performWrite(w: Writing) {
     val journalIdx = PageIdx(journalIndex.size)
     val pos = journalHeader.offsetForPageIdx(journalIdx)
     
     val pageIdxBytes = ByteString.newBuilder
-    q.write.page.put(pageIdxBytes)(byteOrder)
-    if (q.write.page >= pageCount) {
-      pageCount = q.write.page + 1
+    w.page.put(pageIdxBytes)(byteOrder)
+    if (w.page >= pageCount) {
+      pageCount = w.page + 1
     }
     
-    val idxAndContent = pageIdxBytes.result ++ q.write.content
+    val idxAndContent = pageIdxBytes.result ++ w.entry.write.pages(w.page)
     
-    journalFile ! FileActor.Write(pos, idxAndContent, q)
-    writing(q.write.page) = q.write.content
-    journalIndex :+= q.write.page
+    journalFile ! FileActor.Write(pos, idxAndContent, w)
+    
+    writing(w.page) = w
+    journalIndex :+= w.page
   }
   
   def emptyWriteQueue() {
-    writeQueue.map(q => q.write.page -> q).toMap.values.foreach(performWrite)    
+    writeQueue.foreach(performWrite)
     writeQueue = Vector.empty
   }
   
@@ -109,7 +130,11 @@ object PagedStorage {
   case class Read(page: PageIdx, ctx: AnyRef = None)
   case class ReadCompleted(content: ByteString, ctx: AnyRef)
   
-  case class Write(page: PageIdx, content: ByteString, ctx: AnyRef = None)
+  case class Write(pages: Map[PageIdx, ByteString], ctx: AnyRef = None)
+  object Write {
+    def apply(page: PageIdx, content: ByteString, ctx:AnyRef) = new Write(Map(page -> content), ctx)
+    def apply(page: PageIdx, content: ByteString) = new Write(Map(page -> content), None)
+  }
   case class WriteCompleted(ctx: AnyRef)
   
   val defaultPageSize = 64 * 1024
