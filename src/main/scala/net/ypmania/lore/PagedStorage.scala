@@ -17,14 +17,59 @@ import akka.util.ByteIterator
 import akka.actor.PoisonPill
 import akka.util.ByteStringBuilder
 import akka.actor.ActorLogging
-
 import PagedStorage._
-class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
-                   initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) extends Actor with ActorLogging {
+import java.security.MessageDigest
 
-  val pageSize = dataHeader.pageSize
-  var journalIndex = initialJournalIndex
+class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
+                   initialJournalIndex: Map[PageIdx, Long], initialPages: PageIdx, initialJournalPos: Long) extends Actor with ActorLogging {
+
+  implicit val byteOrder = PagedStorage.byteOrder
+  
+  var journalIndex = collection.mutable.Map.empty[PageIdx,Long] ++ initialJournalIndex
+  var journalPos = initialJournalPos
   var pageCount = initialPages
+  var writeQueue = Vector.empty[WriteQueueEntry]
+  var writing = collection.mutable.Map.empty[PageIdx, WriteQueueEntry]
+
+  val emptyPageArray = new Array[Byte](dataHeader.pageSize)
+  val emptyPage = ByteString(emptyPageArray)
+  
+  case class JournalEntry private(pages: Map[PageIdx, ByteString], md5: ByteString) {
+    def toByteString = {
+      val bs = new ByteStringBuilder
+      bs ++= md5
+      bs.putInt(pages.size)
+      for (pageIdx <- pages.keys) { 
+        pageIdx.put(bs)
+      }
+      for (content <- pages.values) {
+        bs ++= content
+        if (content.size < dataHeader.pageSize) {
+          // Fill with zeroes
+          bs ++= emptyPage.take(dataHeader.pageSize - content.size)
+        }
+      }
+      bs.result
+    }    
+  }
+  object JournalEntry {
+    def apply(pages: Map[PageIdx, ByteString]) = {
+      val md = MessageDigest.getInstance("MD5")
+      for (pageIdx <- pages.keys) {
+        val b = new ByteStringBuilder()
+        pageIdx.put(b)(PagedStorage.byteOrder)
+        md.update(b.result.asByteBuffer)
+      }
+      for (content <- pages.values) {
+        md.update(content.asByteBuffer)
+        if (content.size < dataHeader.pageSize) {
+          // Fill with zeroes
+          md.update(emptyPageArray, 0, dataHeader.pageSize - content.size)
+        }
+      }
+      new JournalEntry(pages, ByteString(md.digest()))
+    }
+  }
   
   case class WriteQueueEntry (sender: ActorRef, write: Write) {
     private var inProgress = write.pages.size
@@ -35,29 +80,25 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
     }
   }
   case class Reading(sender: ActorRef, read: Read)
-  private case class Writing(entry: WriteQueueEntry, page: PageIdx)
+  case class Writing(entry: WriteQueueEntry, page: PageIdx)
   
-  var writeQueue = Vector.empty[WriteQueueEntry]
-  private var writing = collection.mutable.Map.empty[PageIdx, Writing]
-
   def receive = {
     case read:Read =>
       if (read.page >= pageCount) 
         throw new Exception (s"Trying to read page ${read.page} but only have ${pageCount}")
-      writing.get(read.page).map { w =>
+      writing.get(read.page).map { entry =>
         log.debug(s"Replying in-transit write content to ${sender}")
-        val contentBeingWritten = w.entry.write.pages(read.page)
+        val contentBeingWritten = entry.write.pages(read.page)
         sender ! ReadCompleted(contentBeingWritten, read.ctx)
       }.getOrElse {
-        //performance: also keep a reverse journal Index of "latest page"
-        val journalPage = journalIndex.lastIndexWhere(_ == read.page)
-        if (journalPage != -1) {
-          val pos = journalHeader.offsetForPageContent(PageIdx(journalPage))
+        journalIndex.get(read.page).map { pos =>
+          log.debug(s"Found page ${read.page} in journal at pos ${pos}")
           journalFile ! FileActor.Read(pos, journalHeader.pageSize, Reading(sender, read))
-        } else {
+        }.getOrElse {
           val pos = dataHeader.offsetForPage(read.page)
-          dataFile ! FileActor.Read(pos, dataHeader.pageSize, Reading(sender, read))
-        }
+          log.debug(s"Reading page ${read.page} from data at pos ${pos}")
+          dataFile ! FileActor.Read(pos, dataHeader.pageSize, Reading(sender, read))          
+        }  
       }
       
     case FileActor.ReadCompleted(content, Reading(replyTo, read)) =>  
@@ -75,42 +116,36 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
         writeQueue :+= q
       }
       
-    case FileActor.WriteCompleted(Writing(entry, page)) =>
-      entry.finishPage(page)
-      if (entry.done) {
-        entry.sender ! WriteCompleted(entry.write.ctx)
-        entry.write.pages.keys.foreach(writing.remove)
-        if (writing.isEmpty) {
-          emptyWriteQueue()
-        }
+    case FileActor.WriteCompleted(entry:WriteQueueEntry) =>
+      entry.sender ! WriteCompleted(entry.write.ctx)
+      entry.write.pages.keys.foreach(writing.remove)
+      if (!writing.isEmpty) {
+        log.warning("Writing log was not empty after completing a write. Concurrency bug.")
       }
+      emptyWriteQueue()
       
     case other =>
       log.error("Dropping {}", other)
   }
   
   def performWrite(q: WriteQueueEntry) {
+    val journalEntry = JournalEntry(q.write.pages)
+    val content = journalEntry.toByteString
+    journalFile ! FileActor.Write(journalPos, content, q)
+    
+    journalPos += SizeOf.MD5
+    journalPos += SizeOf.Int // number of pages
     for (page <- q.write.pages.keys) {
-      performWrite(Writing(q, page))
+      if (page >= pageCount) {
+        pageCount = page + 1
+      }
+      writing(page) = q
+      
+      journalPos += SizeOf.PageIdx
+      log.debug(s"Stored page ${page} at ${journalPos}")
+      journalIndex(page) = journalPos
+      journalPos += journalHeader.pageSize
     }
-  }
-  
-  def performWrite(w: Writing) {
-    val journalIdx = PageIdx(journalIndex.size)
-    val pos = journalHeader.offsetForPageIdx(journalIdx)
-    
-    val pageIdxBytes = ByteString.newBuilder
-    w.page.put(pageIdxBytes)(byteOrder)
-    if (w.page >= pageCount) {
-      pageCount = w.page + 1
-    }
-    
-    val idxAndContent = pageIdxBytes.result ++ w.entry.write.pages(w.page)
-    
-    journalFile ! FileActor.Write(pos, idxAndContent, w)
-    
-    writing(w.page) = w
-    journalIndex :+= w.page
   }
   
   def emptyWriteQueue() {
@@ -124,8 +159,8 @@ object PagedStorage {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
   
   def props (dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
-                initialJournalIndex: Vector[PageIdx], initialPages: PageIdx) =
-    Props(classOf[PagedStorage], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt)
+                initialJournalIndex: Map[PageIdx, Long], initialPages: PageIdx, initialJournalPos: Long) =
+    Props(classOf[PagedStorage], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt, initialJournalPos)
   
   case class Read(page: PageIdx, ctx: AnyRef = None)
   case class ReadCompleted(content: ByteString, ctx: AnyRef)
@@ -170,16 +205,6 @@ object PagedStorage {
       bs.putInt(pageSize)
       bs.result
     }
-    def bytesPerPage = SizeOf.PageIdx + pageSize
-    def pageCountWithFileSize(filesize: Long) = {
-      if ((filesize - JournalHeader.size) % (pageSize + SizeOf.PageIdx) != 0) {
-        println("corrupt journal file size")
-        throw new Exception ("Corrupt journal file size: " + filesize)
-      }
-      PageIdx(((filesize - JournalHeader.size) / bytesPerPage).toInt)
-    }
-    def offsetForPageIdx(page: PageIdx) = JournalHeader.size + (page * bytesPerPage)
-    def offsetForPageContent(page: PageIdx) = JournalHeader.size + (page * bytesPerPage) + SizeOf.PageIdx
   }
   object JournalHeader {
     private val defaultMagic = "lore-jr4".getBytes("UTF-8")

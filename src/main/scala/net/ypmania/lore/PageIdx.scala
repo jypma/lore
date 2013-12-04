@@ -15,6 +15,8 @@ class PageIdx (val idx: Int) extends AnyVal with Ordered[PageIdx] {
   def toInt = idx
   
   def compare(that: PageIdx) = idx - that.idx
+  
+  override def toString = s"PageIdx(${idx})"
 }
 
 object PageIdx {

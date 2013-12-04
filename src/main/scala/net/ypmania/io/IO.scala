@@ -21,6 +21,8 @@ object IO {
   
   object SizeOf {
     val Int = 4
+    val Long = 8
+    val MD5 = 16
     val PageIdx = Int
   }
 }

@@ -23,15 +23,15 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
   case object JournalOpen
   case object ReadDataHeader
   case object ReadJournalHeader
-  case object ReadJournalPage
+  case object ReadJournalEntrySize
+  case object ReadJournalEntryPages
 
   import PagedStorage._
   
   private var dataFile: ActorRef = _
   private var journalFile: ActorRef = _
-  private val journalIndex = new VectorBuilder[PageIdx]
-  private var journalPages = PageIdx(0)
-  private var journalPageIdx = PageIdx(0)
+  private val journalIndex = Map.newBuilder[PageIdx, Long]
+  private var journalPos:Long = 0
   private var journalFileSize: Long = 0
   private var journalHeader: JournalHeader = _
   private var dataHeader: DataHeader = _
@@ -44,16 +44,18 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
     io ! FileActor.IO.Open(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE), JournalOpen)
   }
 
-  private def readJournal {
-    if (journalPageIdx < journalPages) {
-      journalFile ! FileActor.Read(journalHeader.offsetForPageIdx(journalPageIdx), SizeOf.PageIdx, ReadJournalPage)
+  private def readNextJournalEntrySize() {
+    if (journalPos < journalFileSize) {
+      journalFile ! FileActor.Read(journalPos, SizeOf.Int, ReadJournalEntrySize)
     } else {
       log.debug("data file: {}", dataFile)
       log.debug("journal file: {}", journalFile)
       log.debug("page size: {}", dataHeader.pageSize)
       log.debug("journal index: {}", journalIndex.result)
+      log.debug(s"Finished parsing. Journal pos ${journalPos} of ${journalFileSize}")
       val pagedStorage = context.system.actorOf(PagedStorage.props(
-        dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, dataHeader.pageCount(dataFileSize)))
+        dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, 
+        dataHeader.pageCount(dataFileSize), journalPos))
       requestor ! pagedStorage
       context.stop(self)
     }
@@ -65,12 +67,11 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
         log.debug("mismatched page size")
         throw new Exception(s"Data file page size ${dataHeader.pageSize} but journal has ${journalHeader.pageSize}")
       }
-      journalPages = journalHeader.pageCountWithFileSize(journalFileSize)
-      readJournal
+      readNextJournalEntrySize()
     }
   }
 
-  private def handleEmptyDb {
+  private def handleEmptyDb() {
     if (isEmpty && dataFile != null && journalFile != null) {
       val dataHeader = DataHeader()
       dataFile ! FileActor.Write(0, dataHeader.toByteString)
@@ -79,7 +80,7 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       journalFile ! FileActor.Write(0, journalHeader.toByteString)
       journalFile ! FileActor.Sync()
       val pagedFile = context.system.actorOf(PagedStorage.props(
-        dataFile, journalFile, dataHeader, journalHeader, Vector.empty, PageIdx(0)))
+        dataFile, journalFile, dataHeader, journalHeader, Map.empty, PageIdx(0), 0))
       requestor ! pagedFile
       context.stop(self)
     }
@@ -90,7 +91,7 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       log.debug("Opened new data")
       dataFile = file
       isEmpty = true
-      handleEmptyDb
+      handleEmptyDb()
 
     case FileActor.IO.OpenedExisting(file, size, DataOpen) =>
       log.debug("Opened existing data of size {}", size)
@@ -117,6 +118,7 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       journalFile = file;
       journalFileSize = size;
       journalFile ! FileActor.Read(0, JournalHeader.size, ReadJournalHeader)
+      journalPos = JournalHeader.size
       handleEmptyDb
 
     case FileActor.ReadCompleted(bytes, ReadJournalHeader) =>
@@ -128,11 +130,24 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       }
       validate
 
-    case FileActor.ReadCompleted(bytes, ReadJournalPage) =>
-      log.debug("Read journal page")
-      journalIndex += PageIdx.get(bytes.iterator)
-      journalPageIdx += 1
-      readJournal
+    case FileActor.ReadCompleted(bytes, ReadJournalEntrySize) =>
+      val pageCount = bytes.iterator.getInt
+      log.debug(s"Read journal entry with ${pageCount} pages")
+      journalPos += SizeOf.Int
+      journalFile ! FileActor.Read(journalPos, SizeOf.PageIdx * pageCount, ReadJournalEntryPages)
+
+    case FileActor.ReadCompleted(bytes, ReadJournalEntryPages) =>
+      journalPos += bytes.size
+      val pageCount = bytes.size / SizeOf.PageIdx
+      log.debug(s"Parsing journal entry with ${pageCount} pages")
+      val iterator = bytes.iterator
+      for (i <- 0 until pageCount) {
+        val pageIdx = PageIdx.get(iterator)
+        log.debug(s"Page ${pageIdx} is at position ${journalPos}")
+        journalIndex += (pageIdx -> journalPos)
+        journalPos += journalHeader.pageSize
+      }
+      readNextJournalEntrySize()
 
     case other =>
       log.error("Dropping {}", other)
