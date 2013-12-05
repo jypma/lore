@@ -18,8 +18,8 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
                 val initialJournalIndex:Map[PageIdx, Long] = Map.empty)  {
     val dataFile = TestProbe()
     val journalFile = TestProbe()
-    val dataHeader = PagedStorage.DataHeader()
-    val journalHeader = PagedStorage.JournalHeader()
+    val dataHeader = DataHeader()
+    val journalHeader = JournalHeader(dataHeader)
     val content = ByteString("Hello, world")
     val pageContent = content ++ ByteString(new Array[Byte](dataHeader.pageSize - content.size))
     val initialJournalPos:Long = 0
@@ -90,7 +90,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       
       f ! PagedStorage.Read(PageIdx(0))
       val read = dataFile.expectMsgType[FileActor.Read]
-      read.from should be (PagedStorage.DataHeader.size)
+      read.from should be (DataHeader.size)
       read.size should be (dataHeader.pageSize)
       dataFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
       val hasread = expectMsgType[PagedStorage.ReadCompleted]

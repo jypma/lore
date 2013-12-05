@@ -4,19 +4,14 @@ import java.nio.file.Paths
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.WRITE
+
 import akka.actor.Actor
-import akka.actor.Props
-import net.ypmania.io.FileActor
-import akka.actor.ActorRef
-import java.nio.ByteOrder
-import akka.actor.Status
-import akka.util.ByteString
-import scala.collection.immutable.VectorBuilder
-import net.ypmania.io.IO._
-import akka.util.ByteIterator
-import akka.actor.PoisonPill
-import akka.util.ByteStringBuilder
 import akka.actor.ActorLogging
+import akka.actor.ActorRef
+import akka.actor.Props
+import akka.actor.actorRef2Scala
+import net.ypmania.io.FileActor
+import net.ypmania.io.IO._
 
 class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor with ActorLogging {
   case object DataOpen
@@ -76,7 +71,7 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       val dataHeader = DataHeader()
       dataFile ! FileActor.Write(0, dataHeader.toByteString)
       dataFile ! FileActor.Sync()
-      val journalHeader = JournalHeader()
+      val journalHeader = JournalHeader(dataHeader)
       journalFile ! FileActor.Write(0, journalHeader.toByteString)
       journalFile ! FileActor.Sync()
       val pagedFile = context.system.actorOf(PagedStorage.props(

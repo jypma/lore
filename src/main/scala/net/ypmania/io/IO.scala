@@ -2,8 +2,11 @@ package net.ypmania.io
 
 import akka.util.ByteString
 import net.ypmania.lore.ID
+import java.nio.ByteOrder
 
 object IO {
+  implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
+  
   def toID(buf: Array[Byte], ofs:Int) =
     ID(toLong(buf, ofs), toLong(buf, ofs + 8))
   

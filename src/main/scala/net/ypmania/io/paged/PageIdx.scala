@@ -1,7 +1,8 @@
 package net.ypmania.io.paged
 
-import akka.util.ByteIterator
 import java.nio.ByteOrder
+
+import akka.util.ByteIterator
 import akka.util.ByteStringBuilder
 
 class PageIdx (val idx: Int) extends AnyVal with Ordered[PageIdx] {

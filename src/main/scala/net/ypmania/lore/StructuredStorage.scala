@@ -6,6 +6,7 @@ import akka.actor.Actor
 import akka.util.ByteString
 import net.ypmania.io.paged.PageIdx
 import net.ypmania.io.paged.PagedStorage
+import net.ypmania.io.IO
 
 class StructuredStorage(pagedStore: ActorRef) extends Actor with ActorLogging {
   val cache = collection.mutable.Map.empty[PageIdx, AnyRef]
@@ -21,7 +22,7 @@ class StructuredStorage(pagedStore: ActorRef) extends Actor with ActorLogging {
 
 object StructuredStorage {
   trait PageType[T] {
-    implicit val byteOrder = PagedStorage.byteOrder
+    protected implicit val byteOrder = IO.byteOrder
     
     def fromByteString(page: ByteString): T
     def toByteString(page: T): ByteString
