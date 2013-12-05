@@ -1,24 +1,20 @@
-package net.ypmania.lore
+package net.ypmania.io.paged
 
-import java.nio.file.Paths
-import java.nio.file.StandardOpenOption.CREATE
-import java.nio.file.StandardOpenOption.READ
-import java.nio.file.StandardOpenOption.WRITE
-import akka.actor.Actor
-import akka.actor.Props
-import net.ypmania.io.FileActor
-import akka.actor.ActorRef
 import java.nio.ByteOrder
-import akka.actor.Status
-import akka.util.ByteString
-import scala.collection.immutable.VectorBuilder
-import net.ypmania.io.IO._
-import akka.util.ByteIterator
-import akka.actor.PoisonPill
-import akka.util.ByteStringBuilder
-import akka.actor.ActorLogging
-import PagedStorage._
 import java.security.MessageDigest
+
+import akka.actor.Actor
+import akka.actor.ActorLogging
+import akka.actor.ActorRef
+import akka.actor.Props
+import akka.actor.actorRef2Scala
+import akka.util.ByteIterator
+import akka.util.ByteString
+import akka.util.ByteStringBuilder
+import net.ypmania.io.FileActor
+import net.ypmania.io.IO.SizeOf
+
+import PagedStorage._
 
 class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
                    initialJournalIndex: Map[PageIdx, Long], initialPages: PageIdx, initialJournalPos: Long) extends Actor with ActorLogging {

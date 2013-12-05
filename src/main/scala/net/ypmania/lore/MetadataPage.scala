@@ -2,6 +2,7 @@ package net.ypmania.lore
 
 import java.nio.ByteOrder
 import akka.util.ByteString
+import net.ypmania.io.paged.PageIdx
 
 case class MetadataPage(firstFreeList: PageIdx, branches: PageIdx, commands: PageIdx) {
 

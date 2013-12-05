@@ -1,4 +1,4 @@
-package net.ypmania.lore
+package net.ypmania.io.paged;
 
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption.CREATE

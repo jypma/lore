@@ -1,16 +1,11 @@
-package net.ypmania.lore
+package net.ypmania.io.paged
 
 import org.scalatest.WordSpecLike
 import org.scalatest.Matchers
 import akka.actor.ActorSystem
-import java.io.File
 import akka.testkit.TestKit
-import scala.util.Random
-import akka.actor.ActorRef
-import akka.actor.Props
 import org.scalatest.concurrent.Eventually
 import akka.testkit.TestProbe
-import akka.actor.Status
 import akka.testkit.TestActorRef
 import akka.util.ByteString
 import net.ypmania.io.FileActor
@@ -116,6 +111,10 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
                                                    0 :: 0 :: 0 :: 0 :: 
                                                    1 :: 0 :: 0 :: 0 :: Nil)
     }
+    
+    "return the latest version of a page that has been overwritten" in new Fixture {
+      
+    } 
   }
 
 }

@@ -4,6 +4,8 @@ import akka.actor.ActorRef
 import akka.actor.ActorLogging
 import akka.actor.Actor
 import akka.util.ByteString
+import net.ypmania.io.paged.PageIdx
+import net.ypmania.io.paged.PagedStorage
 
 class StructuredStorage(pagedStore: ActorRef) extends Actor with ActorLogging {
   val cache = collection.mutable.Map.empty[PageIdx, AnyRef]

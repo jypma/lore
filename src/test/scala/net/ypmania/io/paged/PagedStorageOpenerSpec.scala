@@ -1,14 +1,14 @@
-package net.ypmania.lore
+package net.ypmania.io.paged
 
 import org.scalatest.WordSpecLike
 import org.scalatest.Matchers
 import akka.actor.ActorSystem
-import java.io.File
 import akka.testkit.TestKit
 import scala.util.Random
+import org.scalatest.concurrent.Eventually
 import akka.actor.ActorRef
 import akka.actor.Props
-import org.scalatest.concurrent.Eventually
+import java.io.File
 
 class PagedFileOpenerSpec extends TestKit(ActorSystem("Test")) with WordSpecLike with Matchers with Eventually {
   class Fixture {
@@ -22,6 +22,8 @@ class PagedFileOpenerSpec extends TestKit(ActorSystem("Test")) with WordSpecLike
       eventually {
         new File(filename).length should not be (0)
       }
+      // TODO write some pages
+      
       system.actorOf(Props(classOf[PagedStorageOpener], testActor, filename))
       val createdFile = expectMsgType[ActorRef]
       new File(filename) should be ('exists)      

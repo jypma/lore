@@ -1,4 +1,4 @@
-package net.ypmania.lore
+package net.ypmania.io.paged
 
 import akka.util.ByteIterator
 import java.nio.ByteOrder
