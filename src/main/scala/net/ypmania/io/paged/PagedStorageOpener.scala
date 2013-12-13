@@ -14,7 +14,9 @@ import net.ypmania.io.IO._
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 
-class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor with ActorLogging {
+trait PagedStorageOpener {
+  this: Actor with ActorLogging with PagedStorageWorker =>
+    
   case object DataOpen
   case object JournalOpen
   case object ReadDataHeader
@@ -35,17 +37,16 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
   private var dataFileSize: Long = 0
   private var pageCount = PageIdx(0)
 
-  override val supervisorStrategy = OneForOneStrategy() {
-    case _:IllegalStateException => SupervisorStrategy.Escalate
-  }
+//  override val supervisorStrategy = OneForOneStrategy() {
+//    case _:IllegalStateException => SupervisorStrategy.Escalate
+//  }
   
-  override def preStart {
+  def open (filename: String) {
     val io = context.actorOf(Props[FileActor.IO], "io")
     io ! FileActor.IO.Open(Paths.get(filename), Seq(READ, WRITE, CREATE), DataOpen)
     io ! FileActor.IO.Open(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE), JournalOpen)
-  }
-
-  private def readNextJournalEntrySize() {
+    
+  def readNextJournalEntrySize() {
     if (journalPos < journalFileSize) {
       journalFile ! FileActor.Read(journalPos, SizeOf.Int, ReadJournalEntrySize)
     } else {
@@ -55,15 +56,13 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       log.debug("journal index: {}", journalIndex.result)
       log.debug(s"Finished parsing. Journal pos ${journalPos} of ${journalFileSize}")
       
-      val pagedStorage = context.system.actorOf(PagedStorage.props(
+      work(
         dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, 
-        pageCount, journalPos))
-      requestor ! pagedStorage
-      context.stop(self)
+        pageCount, journalPos)
     }
   }
 
-  private def validate {
+  def validate {
     if (dataHeader != null && journalHeader != null) {
       if (dataHeader.pageSize != journalHeader.pageSize) {
         log.debug("mismatched page size")
@@ -73,7 +72,7 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
     }
   }
 
-  private def handleEmptyDb {
+  def handleEmptyDb {
     if (isEmpty && dataFile != null && journalFile != null) {
       val dataHeader = DataHeader()
       dataFile ! FileActor.Write(0, dataHeader.toByteString)
@@ -81,19 +80,18 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       val journalHeader = JournalHeader(dataHeader)
       journalFile ! FileActor.Write(0, journalHeader.toByteString)
       journalFile ! FileActor.Sync()
-      val pagedFile = context.system.actorOf(PagedStorage.props(
+      work(
         dataFile, journalFile, dataHeader, journalHeader, Map.empty, PageIdx(0), 
-        JournalHeader.size))
-      requestor ! pagedFile
-      context.stop(self)
+        JournalHeader.size)
     }
   }
 
-  private def havePage(page: PageIdx) {
+  def havePage(page: PageIdx) {
     pageCount = pageCount max (page + 1)
   }
   
-  def receive = {
+    context.become {
+      
     case FileActor.IO.OpenedNew(file, DataOpen) =>
       log.debug("Opened new data")
       dataFile = file
@@ -161,5 +159,6 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
 
     case other =>
       log.error("Dropping {}", other)
+  }
   }
 }
