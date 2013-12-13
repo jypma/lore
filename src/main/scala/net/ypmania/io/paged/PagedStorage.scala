@@ -2,7 +2,6 @@ package net.ypmania.io.paged
 
 import java.nio.ByteOrder
 import java.security.MessageDigest
-
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -13,11 +12,13 @@ import akka.util.ByteString
 import akka.util.ByteStringBuilder
 import net.ypmania.io.FileActor
 import net.ypmania.io.IO._
-
 import PagedStorage._
+import akka.actor.PoisonPill
 
 class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
                    initialJournalIndex: Map[PageIdx, Long], initialPages: PageIdx, initialJournalPos: Long) extends Actor with ActorLogging {
+  
+  require(initialJournalPos >= JournalHeader.size)
   
   var journalIndex = collection.mutable.Map.empty[PageIdx,Long] ++ initialJournalIndex
   var journalPos = initialJournalPos
@@ -38,6 +39,7 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
   
   def receive = {
     case read:Read =>
+      log.debug(s"processing read for ${sender}")
       if (read.page >= pageCount) 
         throw new Exception (s"Trying to read page ${read.page} but only have ${pageCount}")
       writing.get(read.page).map { entry =>
@@ -50,7 +52,7 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
           journalFile ! FileActor.Read(pos, journalHeader.pageSize, Reading(sender, read))
         }.getOrElse {
           val pos = dataHeader.offsetForPage(read.page)
-          log.debug(s"Reading page ${read.page} from data at pos ${pos}")
+          log.debug(s"Reading page ${read.page} from data at pos ${pos} for ${sender}")
           dataFile ! FileActor.Read(pos, dataHeader.pageSize, Reading(sender, read))          
         }  
       }
@@ -77,6 +79,10 @@ class PagedStorage(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHe
         log.warning("Writing log was not empty after completing a write. Concurrency bug.")
       }
       emptyWriteQueue()
+      
+    case Shutdown =>
+      emptyWriteQueue()
+      self ! PoisonPill
       
     case other =>
       log.error("Dropping {}", other)
@@ -124,4 +130,5 @@ object PagedStorage {
   }
   case class WriteCompleted(ctx: AnyRef)
   
+  case object Shutdown
 }

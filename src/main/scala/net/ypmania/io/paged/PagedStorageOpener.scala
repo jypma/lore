@@ -4,7 +4,6 @@ import java.nio.file.Paths
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.WRITE
-
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -12,6 +11,8 @@ import akka.actor.Props
 import akka.actor.actorRef2Scala
 import net.ypmania.io.FileActor
 import net.ypmania.io.IO._
+import akka.actor.OneForOneStrategy
+import akka.actor.SupervisorStrategy
 
 class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor with ActorLogging {
   case object DataOpen
@@ -32,9 +33,14 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
   private var dataHeader: DataHeader = _
   private var isEmpty = false
   private var dataFileSize: Long = 0
+  private var pageCount = PageIdx(0)
 
+  override val supervisorStrategy = OneForOneStrategy() {
+    case _:IllegalStateException => SupervisorStrategy.Escalate
+  }
+  
   override def preStart {
-    val io = context.actorOf(Props[FileActor.IO])
+    val io = context.actorOf(Props[FileActor.IO], "io")
     io ! FileActor.IO.Open(Paths.get(filename), Seq(READ, WRITE, CREATE), DataOpen)
     io ! FileActor.IO.Open(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE), JournalOpen)
   }
@@ -48,9 +54,10 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       log.debug("page size: {}", dataHeader.pageSize)
       log.debug("journal index: {}", journalIndex.result)
       log.debug(s"Finished parsing. Journal pos ${journalPos} of ${journalFileSize}")
+      
       val pagedStorage = context.system.actorOf(PagedStorage.props(
         dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, 
-        dataHeader.pageCount(dataFileSize), journalPos))
+        pageCount, journalPos))
       requestor ! pagedStorage
       context.stop(self)
     }
@@ -60,13 +67,13 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
     if (dataHeader != null && journalHeader != null) {
       if (dataHeader.pageSize != journalHeader.pageSize) {
         log.debug("mismatched page size")
-        throw new Exception(s"Data file page size ${dataHeader.pageSize} but journal has ${journalHeader.pageSize}")
+        throw new IllegalStateException(s"Data file page size ${dataHeader.pageSize} but journal has ${journalHeader.pageSize}")
       }
       readNextJournalEntrySize()
     }
   }
 
-  private def handleEmptyDb() {
+  private def handleEmptyDb {
     if (isEmpty && dataFile != null && journalFile != null) {
       val dataHeader = DataHeader()
       dataFile ! FileActor.Write(0, dataHeader.toByteString)
@@ -75,18 +82,23 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       journalFile ! FileActor.Write(0, journalHeader.toByteString)
       journalFile ! FileActor.Sync()
       val pagedFile = context.system.actorOf(PagedStorage.props(
-        dataFile, journalFile, dataHeader, journalHeader, Map.empty, PageIdx(0), 0))
+        dataFile, journalFile, dataHeader, journalHeader, Map.empty, PageIdx(0), 
+        JournalHeader.size))
       requestor ! pagedFile
       context.stop(self)
     }
   }
 
+  private def havePage(page: PageIdx) {
+    pageCount = pageCount max (page + 1)
+  }
+  
   def receive = {
     case FileActor.IO.OpenedNew(file, DataOpen) =>
       log.debug("Opened new data")
       dataFile = file
       isEmpty = true
-      handleEmptyDb()
+      handleEmptyDb
 
     case FileActor.IO.OpenedExisting(file, size, DataOpen) =>
       log.debug("Opened existing data of size {}", size)
@@ -97,9 +109,10 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
     case FileActor.ReadCompleted(bytes, ReadDataHeader) =>
       log.debug("Read data header with {} bytes", bytes.length)
       dataHeader = DataHeader(bytes.iterator)
+      havePage(dataHeader.pageCount(dataFileSize))
       if (!dataHeader.valid) {
         log.debug("data file invalid")
-        throw new Exception("data file invalid")
+        throw new IllegalStateException("data file invalid")
       }
       validate
 
@@ -121,7 +134,7 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
       journalHeader = JournalHeader(bytes.iterator)
       if (!journalHeader.valid) {
         log.debug("journal missing file magic")
-        throw new Exception("journal missing file magic")
+        throw new IllegalStateException("journal missing file magic")
       }
       validate
 
@@ -133,15 +146,17 @@ class PagedStorageOpener(requestor: ActorRef, filename: String) extends Actor wi
 
     case FileActor.ReadCompleted(bytes, ReadJournalEntryPages) =>
       journalPos += bytes.size
-      val pageCount = bytes.size / SizeOf.PageIdx
-      log.debug(s"Parsing journal entry with ${pageCount} pages")
+      val entryPageCount = bytes.size / SizeOf.PageIdx
+      log.debug(s"Parsing journal entry with ${entryPageCount} pages")
       val iterator = bytes.iterator
-      for (i <- 0 until pageCount) {
+      for (i <- 0 until entryPageCount) {
         val pageIdx = PageIdx.get(iterator)
+        havePage(pageIdx)
         log.debug(s"Page ${pageIdx} is at position ${journalPos}")
         journalIndex += (pageIdx -> journalPos)
         journalPos += journalHeader.pageSize
       }
+      journalPos += SizeOf.MD5
       readNextJournalEntrySize()
 
     case other =>

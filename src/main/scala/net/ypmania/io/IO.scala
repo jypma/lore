@@ -3,6 +3,7 @@ package net.ypmania.io
 import akka.util.ByteString
 import net.ypmania.lore.ID
 import java.nio.ByteOrder
+import scala.annotation.tailrec
 
 object IO {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
@@ -19,6 +20,24 @@ object IO {
     ((buf(ofs+5) & 0xFF).asInstanceOf[Long] << 16) |
     ((buf(ofs+6) & 0xFF).asInstanceOf[Long] << 8) |
      (buf(ofs+7) & 0xFF).asInstanceOf[Long]
+  
+  implicit class ByteStringOps(val bs: ByteString) {
+    private lazy val zeroes = ByteString(new Array[Byte](128 * 1024))
+    
+    @tailrec 
+    final def zeroPad(length: Integer): ByteString = {
+      if (bs.length >= length)
+        bs
+      else {
+        val needed = length - bs.length 
+        if (needed <= zeroes.length) 
+          bs ++ zeroes.take(needed)
+        else
+          (bs ++ zeroes).zeroPad(needed - zeroes.length)  
+      }
+     
+    }
+  }
   
   private def toInt(b:ByteString) = b.asByteBuffer.getInt
   

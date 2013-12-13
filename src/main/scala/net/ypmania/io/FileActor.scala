@@ -81,7 +81,7 @@ object FileActor {
       case Open(path, options, ctx) =>
         val exists = path.toFile.exists
         log.debug(s"Opening ${path}, exists: ${exists}")
-        val file = context.actorOf(Props(new FileActor(path, options)))
+        val file = context.system.actorOf(Props(new FileActor(path, options)))
         sender ! (if (exists) 
                     OpenedExisting(file, path.toFile.length, ctx)
                   else

@@ -8,6 +8,8 @@ import akka.util.ByteStringBuilder
 class PageIdx (val idx: Int) extends AnyVal with Ordered[PageIdx] {
   def * (bytesPerPage: Int) = idx * bytesPerPage
   def + (that: Int) = new PageIdx(idx + that)
+  def max (that: PageIdx) = new PageIdx (idx.max (that.idx))
+  def min (that: PageIdx) = new PageIdx (idx.min (that.idx))
   
   def put (bs: ByteStringBuilder)(implicit byteOrder: ByteOrder) {
     bs.putInt(idx)
