@@ -31,7 +31,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     val journalFilename = filename + ".j"
     val content = ByteString("Hello, world")
     
-    def tryOpen() = {
+    def open() = {
       system.actorOf(Props(new Actor {
         override val supervisorStrategy = OneForOneStrategy() {
           case x =>
@@ -46,12 +46,8 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
         }
       }), "o$" + openIdx)
       openIdx += 1
-      expectMsgType[Try[ActorRef]]
+      expectMsgType[Try[ActorRef]].get
     }
-    
-    def open() = tryOpen().get
-    
-    def failOpen() = throw tryOpen().failed.get
     
     def close(storage: ActorRef): Unit = {
       watch(storage)
@@ -115,12 +111,19 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     "refuse to open a zero-size data" in new Fixture {
       new FileOutputStream(filename).getChannel().truncate(0)
       intercept[IllegalStateException] {
-        failOpen()
+        open()
       }
     }
     
     "refuse to open a data file with wrong magic" in new Fixture {
-      pending
+      val out = new FileOutputStream(filename)
+      out.write("Hello".getBytes())
+      out.flush()
+      out.close()
+      
+      intercept[IllegalStateException] {
+        open()
+      }
     }
     
     "refuse to open a data file with non-matching file size" in new Fixture {
