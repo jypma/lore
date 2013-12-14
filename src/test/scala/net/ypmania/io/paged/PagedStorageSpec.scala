@@ -19,6 +19,9 @@ import akka.actor.Actor
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 import java.io.FileOutputStream
+import scala.util.Try
+import scala.util.Success
+import scala.util.Failure
 
 class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
   var openIdx = 0
@@ -28,20 +31,27 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     val journalFilename = filename + ".j"
     val content = ByteString("Hello, world")
     
-    def open() = {
+    def tryOpen() = {
       system.actorOf(Props(new Actor {
         override val supervisorStrategy = OneForOneStrategy() {
-          case _ => SupervisorStrategy.Escalate
+          case x =>
+            testActor ! Failure(x)
+            SupervisorStrategy.Escalate
         }
         
         val storage = context.actorOf(Props(classOf[PagedStorage], filename), "storage")
         def receive = {
-          case PagedStorage.Ready => testActor ! storage
+          case PagedStorage.Ready => 
+            testActor ! Success(storage)
         }
       }), "o$" + openIdx)
       openIdx += 1
-      expectMsgType[ActorRef]
+      expectMsgType[Try[ActorRef]]
     }
+    
+    def open() = tryOpen().get
+    
+    def failOpen() = throw tryOpen().failed.get
     
     def close(storage: ActorRef): Unit = {
       watch(storage)
@@ -51,7 +61,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
   }
   
   "a paged storage" should {
-    "be able to open a cleanly created new db" in new Fixture {
+    "be able to create a new db and reopen it" in new Fixture {
       val storage = open()
       eventually {
         new File(filename).length should not be (0)
@@ -88,18 +98,25 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       close(open())
       new File(journalFilename).delete()
       close(open())
-      new File(journalFilename).length should be (JournalHeader.size.toLong) 
+      eventually {
+        new File(journalFilename).length should be (JournalHeader.size.toLong)         
+      }
     }
     
     "be able to open a data file with zero-size journal" in new Fixture {
       close(open())
       new FileOutputStream(journalFilename).getChannel().truncate(0)
       close(open())
-      new File(journalFilename).length should be (JournalHeader.size.toLong)      
+      eventually {        
+        new File(journalFilename).length should be (JournalHeader.size.toLong)      
+      }
     }
     
     "refuse to open a zero-size data" in new Fixture {
-      pending
+      new FileOutputStream(filename).getChannel().truncate(0)
+      intercept[IllegalStateException] {
+        failOpen()
+      }
     }
     
     "refuse to open a data file with wrong magic" in new Fixture {

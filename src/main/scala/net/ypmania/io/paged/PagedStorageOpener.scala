@@ -27,13 +27,16 @@ trait PagedStorageOpener {
     val dataFile = context.actorOf(FileActor.props(
         Paths.get(filename), Seq(READ, WRITE, CREATE)), "d")
     var dataFileSize: Long = 0
+    var dataHeader: DataHeader = null
         
     context.become {      
       case FileActor.OpenedNew  =>
         log.debug("Opened new data")
-        val dataHeader = DataHeader()
+        dataHeader = DataHeader()
         dataFile ! FileActor.Write(0, dataHeader.toByteString)
         dataFile ! FileActor.Sync()
+        
+      case FileActor.SyncCompleted(_) =>
         createJournal(filename, dataFile, dataHeader)
   
       case FileActor.OpenedExisting(size) =>
@@ -61,7 +64,7 @@ trait PagedStorageOpener {
     
     val journalHeader = JournalHeader(dataHeader)
     journalFile ! FileActor.Write(0, journalHeader.toByteString)
-    journalFile ! FileActor.Sync()
+//    journalFile ! FileActor.Sync()
     work(
       dataFile, journalFile, dataHeader, journalHeader, Map.empty, 
       pageCount, JournalHeader.size)

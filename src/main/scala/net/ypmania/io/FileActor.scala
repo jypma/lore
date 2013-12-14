@@ -80,6 +80,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with ActorLo
     case Sync(ctx) =>
       try { 
         channel.force(true)
+        log.debug("Synced")
         sender ! SyncCompleted(ctx)
       } catch {
         case x:IOException => sender ! Status.Failure(x)
