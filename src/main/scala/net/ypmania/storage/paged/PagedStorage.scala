@@ -1,4 +1,4 @@
-package net.ypmania.io.paged
+package net.ypmania.storage.paged
 
 import akka.actor.Actor
 import akka.actor.ActorLogging

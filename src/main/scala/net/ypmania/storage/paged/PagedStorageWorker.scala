@@ -1,18 +1,13 @@
-package net.ypmania.io.paged
+package net.ypmania.storage.paged
 
-import java.nio.ByteOrder
-import java.security.MessageDigest
+import net.ypmania.io.FileActor
+import net.ypmania.io.IO._
+
+import PagedStorage._
+
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
-import akka.actor.Props
-import akka.actor.actorRef2Scala
-import akka.util.ByteIterator
-import akka.util.ByteString
-import akka.util.ByteStringBuilder
-import net.ypmania.io.FileActor
-import net.ypmania.io.IO._
-import PagedStorage._
 import akka.actor.PoisonPill
 
 trait PagedStorageWorker extends Actor with ActorLogging {

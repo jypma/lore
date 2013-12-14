@@ -1,27 +1,27 @@
-package net.ypmania.io.paged
+package net.ypmania.storage.paged
 
-import org.scalatest.WordSpecLike
-import org.scalatest.Matchers
-import akka.actor.ActorSystem
-import akka.testkit.TestKit
-import scala.util.Random
-import org.scalatest.concurrent.Eventually
-import akka.actor.ActorRef
-import akka.actor.Props
 import java.io.File
-import concurrent.duration._
-import language.postfixOps
-import akka.util.ByteString
-import akka.actor.PoisonPill
-import akka.testkit.TestActorRef
-import akka.testkit.ImplicitSender
-import akka.actor.Actor
-import akka.actor.OneForOneStrategy
-import akka.actor.SupervisorStrategy
 import java.io.FileOutputStream
-import scala.util.Try
-import scala.util.Success
+
+import scala.concurrent.duration._
 import scala.util.Failure
+import scala.util.Random
+import scala.util.Success
+import scala.util.Try
+
+import org.scalatest.Matchers
+import org.scalatest.WordSpecLike
+import org.scalatest.concurrent.Eventually
+
+import akka.actor.Actor
+import akka.actor.ActorRef
+import akka.actor.ActorSystem
+import akka.actor.OneForOneStrategy
+import akka.actor.Props
+import akka.actor.SupervisorStrategy
+import akka.testkit.ImplicitSender
+import akka.testkit.TestKit
+import akka.util.ByteString
 
 class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
   var openIdx = 0
@@ -52,7 +52,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     def close(storage: ActorRef): Unit = {
       watch(storage)
       storage ! PagedStorage.Shutdown
-      expectTerminated(storage, 2 seconds)      
+      expectTerminated(storage, 2.seconds)      
     }
   }
   
@@ -101,7 +101,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     
     "be able to open a data file with zero-size journal" in new Fixture {
       close(open())
-      new FileOutputStream(journalFilename).getChannel().truncate(0)
+      new FileOutputStream(journalFilename).getChannel().truncate(0).force(true)
       close(open())
       eventually {        
         new File(journalFilename).length should be (JournalHeader.size.toLong)      
@@ -109,7 +109,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     }
     
     "refuse to open a zero-size data" in new Fixture {
-      new FileOutputStream(filename).getChannel().truncate(0)
+      new FileOutputStream(filename).getChannel().truncate(0).force(true)
       intercept[IllegalStateException] {
         open()
       }

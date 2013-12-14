@@ -4,8 +4,8 @@ import akka.actor.ActorRef
 import akka.actor.ActorLogging
 import akka.actor.Actor
 import akka.util.ByteString
-import net.ypmania.io.paged.PageIdx
-import net.ypmania.io.paged.PagedStorage
+import net.ypmania.storage.paged.PageIdx
+import net.ypmania.storage.paged.PagedStorage
 import net.ypmania.io.IO
 
 class StructuredStorage(pagedStore: ActorRef) extends Actor with ActorLogging {

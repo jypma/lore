@@ -1,17 +1,20 @@
-package net.ypmania.io.paged
+package net.ypmania.storage.paged
+
+import org.scalatest.Matchers
 
 import org.scalatest.WordSpecLike
-import org.scalatest.Matchers
-import akka.actor.ActorSystem
-import akka.testkit.TestKit
 import org.scalatest.concurrent.Eventually
-import akka.testkit.TestProbe
-import akka.testkit.TestActorRef
-import akka.util.ByteString
+
 import net.ypmania.io.FileActor
-import akka.testkit.ImplicitSender
-import net.ypmania.io.IO.SizeOf
+import net.ypmania.io.IO._
+
+import akka.actor.ActorSystem
 import akka.actor.Props
+import akka.testkit.ImplicitSender
+import akka.testkit.TestActorRef
+import akka.testkit.TestKit
+import akka.testkit.TestProbe
+import akka.util.ByteString
 
 class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {

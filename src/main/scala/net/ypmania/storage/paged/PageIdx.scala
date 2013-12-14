@@ -1,7 +1,6 @@
-package net.ypmania.io.paged
+package net.ypmania.storage.paged
 
 import java.nio.ByteOrder
-
 import akka.util.ByteIterator
 import akka.util.ByteStringBuilder
 

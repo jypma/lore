@@ -1,10 +1,9 @@
-package net.ypmania.io.paged
+package net.ypmania.storage.paged
 
 import akka.util.ByteString
 import java.security.MessageDigest
 import akka.util.ByteStringBuilder
 import net.ypmania.io.IO._
-import scala.collection.mutable.MapBuilder
 
 case class JournalEntry private (
     header: JournalHeader,

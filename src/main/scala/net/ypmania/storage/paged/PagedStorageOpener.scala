@@ -1,16 +1,16 @@
-package net.ypmania.io.paged;
+package net.ypmania.storage.paged
 
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.WRITE
+
+import net.ypmania.io.FileActor
+import net.ypmania.io.IO._
+
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
-import akka.actor.Props
-import akka.actor.actorRef2Scala
-import net.ypmania.io.FileActor
-import net.ypmania.io.IO._
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 
