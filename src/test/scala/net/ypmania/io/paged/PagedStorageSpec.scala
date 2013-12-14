@@ -18,6 +18,7 @@ import akka.testkit.ImplicitSender
 import akka.actor.Actor
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
+import java.io.FileOutputStream
 
 class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
   var openIdx = 0
@@ -41,6 +42,12 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       openIdx += 1
       expectMsgType[ActorRef]
     }
+    
+    def close(storage: ActorRef): Unit = {
+      watch(storage)
+      storage ! PagedStorage.Shutdown
+      expectTerminated(storage, 2 seconds)      
+    }
   }
   
   "a paged storage" should {
@@ -50,9 +57,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
         new File(filename).length should not be (0)
       }
       
-      watch(storage)
-      storage ! PagedStorage.Shutdown
-      expectTerminated(storage, 2 seconds)
+      close(storage)
       new File(journalFilename).length should be (JournalHeader.size.toLong) 
       
       open()
@@ -65,9 +70,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       expectMsgType[PagedStorage.WriteCompleted]
       expectMsgType[PagedStorage.WriteCompleted]
       
-      watch(storage)
-      storage ! PagedStorage.Shutdown
-      expectTerminated(storage, 2 seconds)
+      close(storage)
       new File(journalFilename).length should be > JournalHeader.size.toLong 
       
       val reopened = open()
@@ -81,12 +84,18 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       page0.content.take(content.length) should be (content)
     }
     
-    "be able to open a data file with missing journal file" in new Fixture {
-      
+    "be able to open a data file with missing journal" in new Fixture {
+      close(open())
+      new File(journalFilename).delete()
+      close(open())
+      new File(journalFilename).length should be (JournalHeader.size.toLong) 
     }
     
-    "ignore a zero-size journal" in new Fixture {
-      pending
+    "be able to open a data file with zero-size journal" in new Fixture {
+      close(open())
+      new FileOutputStream(journalFilename).getChannel().truncate(0)
+      close(open())
+      new File(journalFilename).length should be (JournalHeader.size.toLong)      
     }
     
     "refuse to open a zero-size data" in new Fixture {

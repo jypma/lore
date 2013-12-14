@@ -34,7 +34,7 @@ trait PagedStorageOpener {
         val dataHeader = DataHeader()
         dataFile ! FileActor.Write(0, dataHeader.toByteString)
         dataFile ! FileActor.Sync()
-        truncateJournal(filename, dataFile, dataHeader)
+        createJournal(filename, dataFile, dataHeader)
   
       case FileActor.OpenedExisting(size) =>
         log.debug("Opened existing data of size {}", size)
@@ -56,17 +56,23 @@ trait PagedStorageOpener {
   def journalProps(filename: String) = 
     FileActor.props(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE))
   
-  def truncateJournal(filename: String, dataFile: ActorRef, dataHeader: DataHeader): Unit = {
+  def initializeJournal(dataHeader: DataHeader, dataFile: ActorRef, 
+      journalFile: ActorRef, pageCount: PageIdx): Unit = {
+    
+    val journalHeader = JournalHeader(dataHeader)
+    journalFile ! FileActor.Write(0, journalHeader.toByteString)
+    journalFile ! FileActor.Sync()
+    work(
+      dataFile, journalFile, dataHeader, journalHeader, Map.empty, 
+      pageCount, JournalHeader.size)
+  }
+    
+  def createJournal(filename: String, dataFile: ActorRef, dataHeader: DataHeader): Unit = {
     val journalFile = context.actorOf(journalProps(filename), "j")
     
     context.become {
       case _:FileActor.Opened =>
-        val journalHeader = JournalHeader(dataHeader)
-        journalFile ! FileActor.Write(0, journalHeader.toByteString)
-        journalFile ! FileActor.Sync()
-        work(
-          dataFile, journalFile, dataHeader, journalHeader, Map.empty, 
-          PageIdx(0), JournalHeader.size)
+        initializeJournal(dataHeader, dataFile, journalFile, PageIdx(0))
     }
   } 
         
@@ -114,18 +120,17 @@ trait PagedStorageOpener {
     context.become {
       case FileActor.OpenedNew =>
         log.debug("Opened new journal")
-        journalHeader = JournalHeader(dataHeader)
-        journalFile ! FileActor.Write(0, journalHeader.toByteString)
-        journalFile ! FileActor.Sync()
-        work(
-          dataFile, journalFile, dataHeader, journalHeader, Map.empty, 
-          pageCount, JournalHeader.size)
+        initializeJournal(dataHeader, dataFile, journalFile, pageCount)
 
-      case FileActor.OpenedExisting(size) if sender == journalFile =>
+      case FileActor.OpenedExisting(size) =>
         log.debug("Opened existing journal of size {}", size)
-        journalFileSize = size;
-        journalFile ! FileActor.Read(0, JournalHeader.size, ReadJournalHeader)
-        journalPos = JournalHeader.size
+        if (size < JournalHeader.size) {
+          initializeJournal(dataHeader, dataFile, journalFile, pageCount)
+        } else {
+          journalFileSize = size;
+          journalFile ! FileActor.Read(0, JournalHeader.size, ReadJournalHeader)
+          journalPos = JournalHeader.size
+        }
 
       case FileActor.ReadCompleted(bytes, ReadJournalHeader) =>
         log.debug("Read journal header with {} bytes", bytes.length)
