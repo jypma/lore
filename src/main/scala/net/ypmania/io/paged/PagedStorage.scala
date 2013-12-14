@@ -9,10 +9,6 @@ class PagedStorage(filename: String) extends Actor with ActorLogging with PagedS
 }
 
 object PagedStorage {
-//  def props (dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
-//                initialJournalIndex: Map[PageIdx, Long], initialPages: PageIdx, initialJournalPos: Long) =
-//    Props(classOf[PagedStorage], dataFile, journalFile, dataHeader, journalHeader, initialJournalIndex, initialPages.toInt, initialJournalPos)
-  
   case class Read(page: PageIdx, ctx: AnyRef = None)
   case class ReadCompleted(content: ByteString, ctx: AnyRef)
   

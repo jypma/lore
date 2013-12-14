@@ -17,8 +17,6 @@ import akka.actor.SupervisorStrategy
 trait PagedStorageOpener {
   this: Actor with ActorLogging with PagedStorageWorker =>
     
-  case object DataOpen
-  case object JournalOpen
   case object ReadDataHeader
   case object ReadJournalHeader
   case object ReadJournalEntrySize
@@ -27,7 +25,9 @@ trait PagedStorageOpener {
   import PagedStorage._
   
   private var dataFile: ActorRef = _
+  private var dataOpen = false
   private var journalFile: ActorRef = _
+  private var journalOpen = false
   private val journalIndex = Map.newBuilder[PageIdx, Long]
   private var journalPos:Long = 0
   private var journalFileSize: Long = 0
@@ -37,14 +37,15 @@ trait PagedStorageOpener {
   private var dataFileSize: Long = 0
   private var pageCount = PageIdx(0)
 
-//  override val supervisorStrategy = OneForOneStrategy() {
-//    case _:IllegalStateException => SupervisorStrategy.Escalate
-//  }
+  override val supervisorStrategy = OneForOneStrategy() {
+    case x:IllegalStateException => SupervisorStrategy.Escalate
+  }
   
   def open (filename: String) {
-    val io = context.actorOf(Props[FileActor.IO], "io")
-    io ! FileActor.IO.Open(Paths.get(filename), Seq(READ, WRITE, CREATE), DataOpen)
-    io ! FileActor.IO.Open(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE), JournalOpen)
+    dataFile = context.actorOf(FileActor.props(
+        Paths.get(filename), Seq(READ, WRITE, CREATE)), "d") 
+    journalFile = context.actorOf(FileActor.props(
+        Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE)), "j")
     
   def readNextJournalEntrySize() {
     if (journalPos < journalFileSize) {
@@ -73,7 +74,7 @@ trait PagedStorageOpener {
   }
 
   def handleEmptyDb {
-    if (isEmpty && dataFile != null && journalFile != null) {
+    if (isEmpty && dataOpen && journalOpen) {
       val dataHeader = DataHeader()
       dataFile ! FileActor.Write(0, dataHeader.toByteString)
       dataFile ! FileActor.Sync()
@@ -92,17 +93,17 @@ trait PagedStorageOpener {
   
     context.become {
       
-    case FileActor.IO.OpenedNew(file, DataOpen) =>
+    case FileActor.OpenedNew if sender == dataFile =>
       log.debug("Opened new data")
-      dataFile = file
+      dataOpen = true
       isEmpty = true
       handleEmptyDb
 
-    case FileActor.IO.OpenedExisting(file, size, DataOpen) =>
+    case FileActor.OpenedExisting(size) if sender == dataFile =>
       log.debug("Opened existing data of size {}", size)
-      dataFile = file
-      dataFile ! FileActor.Read(0, DataHeader.size, ReadDataHeader)
+      dataOpen = true
       dataFileSize = size
+      dataFile ! FileActor.Read(0, DataHeader.size, ReadDataHeader)
 
     case FileActor.ReadCompleted(bytes, ReadDataHeader) =>
       log.debug("Read data header with {} bytes", bytes.length)
@@ -114,18 +115,18 @@ trait PagedStorageOpener {
       }
       validate
 
-    case FileActor.IO.OpenedNew(file, JournalOpen) =>
+    case FileActor.OpenedNew if sender == journalFile =>
+      journalOpen = true
       log.debug("Opened new journal")
-      journalFile = file
       handleEmptyDb
 
-    case FileActor.IO.OpenedExisting(file, size, JournalOpen) =>
+    case FileActor.OpenedExisting(size) if sender == journalFile =>
+      journalOpen = true
       log.debug("Opened existing journal of size {}", size)
-      journalFile = file;
+      handleEmptyDb
       journalFileSize = size;
       journalFile ! FileActor.Read(0, JournalHeader.size, ReadJournalHeader)
       journalPos = JournalHeader.size
-      handleEmptyDb
 
     case FileActor.ReadCompleted(bytes, ReadJournalHeader) =>
       log.debug("Read journal header with {} bytes", bytes.length)
@@ -158,7 +159,7 @@ trait PagedStorageOpener {
       readNextJournalEntrySize()
 
     case other =>
-      log.error("Dropping {}", other)
+      log.error(s"Opener dropping ${other} from ${sender}")
   }
   }
 }

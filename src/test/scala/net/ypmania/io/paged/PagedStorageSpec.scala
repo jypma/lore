@@ -16,6 +16,8 @@ import akka.actor.PoisonPill
 import akka.testkit.TestActorRef
 import akka.testkit.ImplicitSender
 import akka.actor.Actor
+import akka.actor.OneForOneStrategy
+import akka.actor.SupervisorStrategy
 
 class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
   var openIdx = 0
@@ -27,6 +29,10 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     
     def open() = {
       system.actorOf(Props(new Actor {
+        override val supervisorStrategy = OneForOneStrategy() {
+          case _ => SupervisorStrategy.Escalate
+        }
+        
         val storage = context.actorOf(Props(classOf[PagedStorage], filename), "storage")
         def receive = {
           case PagedStorage.Ready => testActor ! storage
@@ -73,6 +79,22 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       reopened ! PagedStorage.Read(PageIdx(1))
       val page1 = expectMsgType[PagedStorage.ReadCompleted]
       page0.content.take(content.length) should be (content)
+    }
+    
+    "ignore a zero-size journal" in new Fixture {
+      pending
+    }
+    
+    "refuse to open a zero-size data" in new Fixture {
+      pending
+    }
+    
+    "refuse to open a data file with wrong magic" in new Fixture {
+      pending
+    }
+    
+    "refuse to open a data file with non-matching file size" in new Fixture {
+      pending
     }
   }  
 }

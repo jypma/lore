@@ -13,19 +13,41 @@ import akka.actor.ActorRef
 import akka.actor.Props
 import akka.actor.ActorLogging
 import java.io.IOException
+import scala.concurrent.Future
+import akka.pattern.pipe;
 
 class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with ActorLogging {
   var channel: AsynchronousFileChannel = _
   
+  def receive = {
+    case Ready(c, opened) =>
+      channel = c
+      context.become(open)
+      context.parent ! opened
+      
+    case other => 
+      log.error(s"Got ${other} from ${sender}, but not yet done opening")
+      throw new IllegalStateException (s"Got ${other} from ${sender}, but not yet done opening")
+  }
+  
   override def preStart {
-    channel = AsynchronousFileChannel.open(path, options: _*)
+    import context.dispatcher 
+    Future { 
+      val opened = (if (path.toFile.exists) 
+                          OpenedExisting(path.toFile.length) 
+                        else 
+                          OpenedNew)
+      Ready(AsynchronousFileChannel.open(path, options: _*), opened)
+    } pipeTo self
   }
   
   override def postStop {
-    channel.close()
+    if (channel != null) {
+      channel.close()      
+    }
   }
   
-  def receive = {
+  def open: Receive = {
     case Read(from, size, ctx) =>
       log.debug("Reading {} bytes at {}", size, from)
       val replyTo = sender
@@ -66,6 +88,9 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with ActorLo
 }
 
 object FileActor {
+  def props(path: Path, options: Seq[OpenOption]) = 
+    Props(classOf[FileActor], path, options)
+  
   case class Read(from: Long, size: Int, ctx:AnyRef = null)
   case class ReadCompleted(bytes: ByteString, ctx:AnyRef)
   
@@ -75,27 +100,9 @@ object FileActor {
   case class Sync(ctx: AnyRef = null)
   case class SyncCompleted(ctx: AnyRef)
   
-  class IO extends Actor with ActorLogging {
-    import IO._
-    def receive = {
-      case Open(path, options, ctx) =>
-        val exists = path.toFile.exists
-        log.debug(s"Opening ${path}, exists: ${exists}")
-        val file = context.system.actorOf(Props(new FileActor(path, options)))
-        sender ! (if (exists) 
-                    OpenedExisting(file, path.toFile.length, ctx)
-                  else
-                    OpenedNew(file, ctx))
-    }
-  }
+  sealed trait Opened
+  case object OpenedNew extends Opened
+  case class OpenedExisting(size: Long) extends Opened
   
-  object IO {
-    case class Open(path: Path, options: Seq[OpenOption], ctx:AnyRef = null)
-    sealed trait Opened {
-      def file: ActorRef
-      def ctx: AnyRef
-    }
-    case class OpenedNew(file: ActorRef, ctx: AnyRef) extends Opened
-    case class OpenedExisting(file: ActorRef, size: Long, ctx: AnyRef) extends Opened    
-  }
+  private case class Ready(channel: AsynchronousFileChannel, opened: Opened)
 }
