@@ -81,6 +81,10 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       page0.content.take(content.length) should be (content)
     }
     
+    "be able to open a data file with missing journal file" in new Fixture {
+      
+    }
+    
     "ignore a zero-size journal" in new Fixture {
       pending
     }
@@ -94,6 +98,14 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     }
     
     "refuse to open a data file with non-matching file size" in new Fixture {
+      pending
+    }
+    
+    "fail when data file can be created but journal can't" in new Fixture {
+      pending
+    }
+    
+    "truncate existing journal file when data file doesn't exist" in new Fixture {
       pending
     }
   }  
