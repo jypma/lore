@@ -2,17 +2,14 @@ package net.ypmania.storage.paged
 
 import java.io.File
 import java.io.FileOutputStream
-
 import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Random
 import scala.util.Success
 import scala.util.Try
-
 import org.scalatest.Matchers
 import org.scalatest.WordSpecLike
 import org.scalatest.concurrent.Eventually
-
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
@@ -22,29 +19,30 @@ import akka.actor.SupervisorStrategy
 import akka.testkit.ImplicitSender
 import akka.testkit.TestKit
 import akka.util.ByteString
+import akka.actor.ActorLogging
 
 class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
   var openIdx = 0
   
-  class Fixture {
-    val filename = "/tmp/PagedFileSpec" + Random.nextInt
+  class Fixture(n:String = "") {
+    val r = Random.nextInt
+    val filename = "/tmp/PagedFileSpec" + r 
     val journalFilename = filename + ".j"
     val content = ByteString("Hello, world")
     
     def open() = {
-      system.actorOf(Props(new Actor {
+      system.actorOf(Props(new Actor with ActorLogging {
         override val supervisorStrategy = OneForOneStrategy() {
           case x =>
             testActor ! Failure(x)
-            SupervisorStrategy.Escalate
+            SupervisorStrategy.Stop
         }
         
-        val storage = context.actorOf(Props(classOf[PagedStorage], filename), "storage")
+        testActor ! Success(context.actorOf(Props(classOf[PagedStorage], filename), "storage"))
         def receive = {
-          case PagedStorage.Ready => 
-            testActor ! Success(storage)
+          case _ => 
         }
-      }), "o$" + openIdx)
+      }), "o$" + r + n + openIdx)
       openIdx += 1
       expectMsgType[Try[ActorRef]].get
     }
@@ -90,7 +88,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       page0.content.take(content.length) should be (content)
     }
     
-    "be able to open a data file with missing journal" in new Fixture {
+    "be able to open a data file with missing journal" in new Fixture("missing") {
       close(open())
       new File(journalFilename).delete()
       close(open())
@@ -99,7 +97,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       }
     }
     
-    "be able to open a data file with zero-size journal" in new Fixture {
+    "be able to open a data file with zero-size journal" in new Fixture("zero") {
       close(open())
       new FileOutputStream(journalFilename).getChannel().truncate(0).force(true)
       close(open())
@@ -110,9 +108,8 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     
     "refuse to open a zero-size data" in new Fixture {
       new FileOutputStream(filename).getChannel().truncate(0).force(true)
-      intercept[IllegalStateException] {
-        open()
-      }
+      open()
+      expectMsgType[Failure[_]]
     }
     
     "refuse to open a data file with wrong magic" in new Fixture {
@@ -121,9 +118,8 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       out.flush()
       out.close()
       
-      intercept[IllegalStateException] {
-        open()
-      }
+      open()
+      expectMsgType[Failure[_]]
     }
     
     "create new pages into the next empty page" in new Fixture {

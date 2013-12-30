@@ -3,8 +3,9 @@ package net.ypmania.storage.paged
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.util.ByteString
+import akka.actor.Stash
 
-class PagedStorage(filename: String) extends Actor with ActorLogging with PagedStorageWorker with PagedStorageOpener {
+class PagedStorage(filename: String) extends Actor with Stash with ActorLogging with PagedStorageWorker with PagedStorageOpener {
   open(filename)
 }
 
@@ -21,8 +22,6 @@ object PagedStorage {
 
   case class Create(content: ByteString, ctx: AnyRef = None)
   case class CreateCompleted(page: PageIdx, ctx: AnyRef)
-  
-  case object Ready
   
   case object Shutdown
 }

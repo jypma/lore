@@ -15,9 +15,11 @@ import akka.actor.ActorLogging
 import java.io.IOException
 import scala.concurrent.Future
 import akka.pattern.pipe;
+import akka.actor.Stash
 
-class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with ActorLogging {
+class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash with ActorLogging {
   var channel: AsynchronousFileChannel = _
+  var writers = 0
   
   def receive = {
     case Ready(c, opened) =>
@@ -67,18 +69,26 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with ActorLo
     case Write(at, bytes, ctx) =>
       log.debug("Writing {} bytes at {}", bytes.asByteBuffer.remaining(), at)
       val replyTo = sender
+      writers += 1
       channel.write(bytes.asByteBuffer, at, null, new CompletionHandler[Integer, Null] {
         override def completed(result: Integer, attachment: Null) {
-          replyTo ! WriteCompleted(ctx)
+          self ! WriteDone(replyTo, WriteCompleted(ctx))
         }
         
         override def failed(error: Throwable, attachment: Null) {
-          replyTo ! Status.Failure(error)
-        }        
+          self ! WriteDone(replyTo, Status.Failure(error))
+        }
       })
       
+    case WriteDone(client, response) =>
+      writers -= 1
+      if (writers <= 0) unstashAll()
+      client ! response
+      
     case Sync(ctx) =>
-      try { 
+      if (writers > 0) {
+        stash()
+      } else try { 
         channel.force(true)
         log.debug("Synced")
         sender ! SyncCompleted(ctx)
@@ -106,4 +116,5 @@ object FileActor {
   case class OpenedExisting(size: Long) extends Opened
   
   private case class Ready(channel: AsynchronousFileChannel, opened: Opened)
+  private case class WriteDone(sender: ActorRef, response: AnyRef)
 }

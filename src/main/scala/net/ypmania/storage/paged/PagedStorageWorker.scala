@@ -131,8 +131,6 @@ trait PagedStorageWorker extends Actor with ActorLogging {
       case other =>
         log.error("Dropping {}", other)
       }
-    
-    context.parent ! Ready
   
   }
 }

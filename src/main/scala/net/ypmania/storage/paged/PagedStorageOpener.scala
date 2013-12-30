@@ -4,18 +4,17 @@ import java.nio.file.Paths
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.WRITE
-
 import net.ypmania.io.FileActor
 import net.ypmania.io.IO._
-
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
+import akka.actor.Stash
 
 trait PagedStorageOpener {
-  this: Actor with ActorLogging with PagedStorageWorker =>
+  this: Actor with Stash with ActorLogging with PagedStorageWorker =>
     
   import PagedStorage._
 
@@ -53,6 +52,8 @@ trait PagedStorageOpener {
         }
         val pageCount = dataHeader.pageCount(dataFileSize)
         readJournal(filename, dataFile, dataHeader, pageCount)
+        
+      case _ => stash()
     }
   }
   
@@ -65,6 +66,7 @@ trait PagedStorageOpener {
     val journalHeader = JournalHeader(dataHeader)
     journalFile ! FileActor.Write(0, journalHeader.toByteString)
 //    journalFile ! FileActor.Sync()
+    unstashAll()
     work(
       dataFile, journalFile, dataHeader, journalHeader, Map.empty, 
       pageCount, JournalHeader.size)
@@ -74,8 +76,9 @@ trait PagedStorageOpener {
     val journalFile = context.actorOf(journalProps(filename), "j")
     
     context.become {
-      case _:FileActor.Opened =>
+      case open:FileActor.Opened =>
         initializeJournal(dataHeader, dataFile, journalFile, PageIdx(0))
+      case _ => stash()
     }
   } 
         
@@ -102,6 +105,7 @@ trait PagedStorageOpener {
         log.debug("journal index: {}", journalIndex.result)
         log.debug(s"Finished parsing. Journal pos ${journalPos} of ${journalFileSize}")
         
+        unstashAll()
         work(
           dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, 
           pageCount, journalPos)
@@ -165,6 +169,7 @@ trait PagedStorageOpener {
         journalPos += SizeOf.MD5
         readNextJournalEntrySize()
   
+      case _ => stash()
     }
   }
 }
