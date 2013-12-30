@@ -11,6 +11,8 @@ import akka.actor.ActorRef
 import akka.actor.PoisonPill
 
 trait PagedStorageWorker extends Actor with ActorLogging {
+  import PagedStorageWorker._
+  
   def receive = { // move this into AbstractActor?
     case _ => throw new IllegalStateException ("Not ready yet")
   }
@@ -89,6 +91,7 @@ trait PagedStorageWorker extends Actor with ActorLogging {
        replyTo ! ReadCompleted(content, read.ctx)
         
       case write:Write =>
+        //TODO also remove this page from freelist
         write.pages.foreach { case (page, content) =>
           if (content.length > journalHeader.pageSize) 
       	  throw new Exception(s"Content length ${content.length} for page ${page} overflows page size ${journalHeader.pageSize}")
@@ -117,6 +120,14 @@ trait PagedStorageWorker extends Actor with ActorLogging {
         //log.debug("Journal synced, poisining ourselves")
         self ! PoisonPill
         
+      case Create(content, ctx) =>
+        //TODO also update freelist with this page
+        self ! Write(pageCount, content, Creating(sender, CreateCompleted(pageCount, ctx)))
+        pageCount += 1
+
+      case WriteCompleted(Creating(client, response)) =>
+        client ! response
+        
       case other =>
         log.error("Dropping {}", other)
       }
@@ -124,4 +135,8 @@ trait PagedStorageWorker extends Actor with ActorLogging {
     context.parent ! Ready
   
   }
+}
+
+object PagedStorageWorker {
+  private case class Creating (sender: ActorRef, response: CreateCompleted)
 }

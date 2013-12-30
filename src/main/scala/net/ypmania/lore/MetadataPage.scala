@@ -3,6 +3,7 @@ package net.ypmania.lore
 import java.nio.ByteOrder
 import akka.util.ByteString
 import net.ypmania.storage.paged.PageIdx
+import net.ypmania.storage.structured.StructuredStorage
 
 case class MetadataPage(firstFreeList: PageIdx, branches: PageIdx, commands: PageIdx) {
 

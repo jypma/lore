@@ -2,6 +2,7 @@ package net.ypmania.lore
 
 import akka.util.ByteString
 import java.nio.ByteOrder
+import net.ypmania.storage.structured.StructuredStorage
 
 case class FreeListPage(nextFreeListPage: Int, pages: Array[Int]) {
 

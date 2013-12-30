@@ -19,6 +19,9 @@ object PagedStorage {
   }
   case class WriteCompleted(ctx: AnyRef)
 
+  case class Create(content: ByteString, ctx: AnyRef = None)
+  case class CreateCompleted(page: PageIdx, ctx: AnyRef)
+  
   case object Ready
   
   case object Shutdown
