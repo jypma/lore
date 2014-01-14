@@ -74,7 +74,8 @@ object StructuredStorage {
       copy (pages = pages + ((entry._1, ((pageType.asInstanceOf[PageType[AnyRef]], entry._2)))))    
   }
   object Write {
-    def apply(ctx: AnyRef = None) = new Write(Map.empty, ctx)
+    def apply():Write = new Write(Map.empty, None)
+    def apply[T <: AnyRef](entry: (PageIdx, T))(implicit pageType: PageType[T]):Write = apply() + entry
   }
   case class WriteCompleted(ctx: AnyRef)
   

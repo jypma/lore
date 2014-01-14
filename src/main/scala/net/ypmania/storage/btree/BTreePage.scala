@@ -25,15 +25,15 @@ case class BTreePage(leaf: Boolean, pointers: TreeMap[ID, PageIdx], next: PageId
   def size = pointers.size
   
   def full (implicit settings: BTree.Settings) =
-    size >= settings.order
+    size >= settings.entriesPerPage
     
   def get(id: ID): Option[PageIdx] = {
-    if (leaf) throw new IllegalStateException("Accessing internal as leaf")
+    if (internal) throw new IllegalStateException("Accessing internal as leaf")
     pointers.get(id)
   }
 
   def lookup(id: ID): PageIdx = {
-    if (internal) throw new IllegalStateException("Accessing leaf as internal")
+    if (leaf) throw new IllegalStateException("Accessing leaf as internal")
     val elem = pointers.from(id)
     if (elem.isEmpty)
       next

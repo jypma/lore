@@ -35,17 +35,20 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
   def active(page: BTreePage): Receive = {
     case msg @ Put(key, value, ctx) =>
       if (page.full) {
+        log.debug(s"Splitting because of ${msg}")
         val (updated, key, right) = page.split
-        structuredStorage ! StructuredStorage.Write(pageIdx, updated)
+        structuredStorage ! StructuredStorage.Write(pageIdx -> updated)
         structuredStorage ! StructuredStorage.Create(right, PerformingSplit)
         context become splitting(updated, key, right)
         stash()
       } else if (page.internal) {
+        log.debug(s"Forwarding ${msg} to a child")
         val destination = page.lookup(key)
         childForPage(destination) forward msg
       } else if (page.leaf) {
         val updated = page + (key -> value)
-        structuredStorage ! StructuredStorage.Write(pageIdx, updated)
+        log.debug(s"Writing ${updated}, replying to ${sender}")
+        structuredStorage ! StructuredStorage.Write(pageIdx -> updated)
         sender ! PutCompleted(ctx)
         context become active(updated)
       }      
@@ -65,7 +68,7 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
     case Split(splitKey, newPageIdx, msgs) =>
       require (!page.full)
       val updated = page + (splitKey -> newPageIdx)
-      structuredStorage ! StructuredStorage.Write(pageIdx, updated)
+      structuredStorage ! StructuredStorage.Write(pageIdx -> updated)
       val child = childForPage(newPageIdx)
       for (msg <- msgs) {
         child.tell(msg.message, msg.sender)
@@ -90,11 +93,12 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
   }
   
   private def childForPage(page: PageIdx) = {
-    context.child(s"${page}") match {
+    val name = page.toInt.toString
+    context.child(name) match {
       case Some(actor) => 
         actor
       case None =>
-        context.actorOf(Props(new BTreePageWorker(structuredStorage, page)), s"${page}")
+        context.actorOf(Props(new BTreePageWorker(structuredStorage, page)), name)
     }
   }
 }

@@ -24,12 +24,12 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
   def receive = {
     case Ready(c, opened) =>
       channel = c
+      unstashAll()
       context.become(open)
       context.parent ! opened
       
-    case other => 
-      log.error(s"Got ${other} from ${sender}, but not yet done opening")
-      throw new IllegalStateException (s"Got ${other} from ${sender}, but not yet done opening")
+    case _ => 
+      stash()
   }
   
   override def preStart {

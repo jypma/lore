@@ -44,7 +44,7 @@ class BTree(structuredStorage: ActorRef, initialRootPageIdx: PageIdx)
   
   def workerActorOf(page: PageIdx) = context.actorOf(
       Props(new BTreePageWorker(structuredStorage, page)), 
-      page.toString)
+      page.toInt.toString)
 }
 
 object BTree {
