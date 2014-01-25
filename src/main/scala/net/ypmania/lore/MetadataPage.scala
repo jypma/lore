@@ -3,7 +3,7 @@ package net.ypmania.lore
 import java.nio.ByteOrder
 import akka.util.ByteString
 import net.ypmania.storage.paged.PageIdx
-import net.ypmania.storage.structured.StructuredStorage
+import net.ypmania.storage.paged.PagedStorage
 
 case class MetadataPage(firstFreeList: PageIdx, branches: PageIdx, commands: PageIdx) {
 
@@ -12,7 +12,7 @@ case class MetadataPage(firstFreeList: PageIdx, branches: PageIdx, commands: Pag
 object MetadataPage {
   val emptyDb = MetadataPage(PageIdx(1), PageIdx(2), PageIdx(3))
   
-  object Type extends StructuredStorage.PageType[MetadataPage] {
+  object Type extends PagedStorage.PageType[MetadataPage] {
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val firstFreeList= PageIdx.get(i)

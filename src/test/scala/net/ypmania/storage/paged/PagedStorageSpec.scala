@@ -20,9 +20,15 @@ import akka.testkit.ImplicitSender
 import akka.testkit.TestKit
 import akka.util.ByteString
 import akka.actor.ActorLogging
+import net.ypmania.storage.paged.PagedStorage.PageType
 
 class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
   var openIdx = 0
+  
+  implicit val byteStringPageType = new PageType[ByteString] {
+    def fromByteString(page: ByteString) = page
+    def toByteString(page: ByteString) = page
+  }
   
   class Fixture(n:String = "") {
     val r = Random.nextInt
@@ -69,8 +75,8 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     
     "parse a journal with multiple entries" in new Fixture {
       val storage = open()
-      storage ! PagedStorage.Write(Map(PageIdx(0) -> content))
-      storage ! PagedStorage.Write(Map(PageIdx(1) -> content))
+      storage ! PagedStorage.Write(PageIdx(0) -> content)
+      storage ! PagedStorage.Write(PageIdx(1) -> content)
       expectMsgType[PagedStorage.WriteCompleted]
       expectMsgType[PagedStorage.WriteCompleted]
       
@@ -79,12 +85,12 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       
       val reopened = open()
       
-      reopened ! PagedStorage.Read(PageIdx(0))
-      val page0 = expectMsgType[PagedStorage.ReadCompleted]
+      reopened ! PagedStorage.Read[ByteString](PageIdx(0))
+      val page0 = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       page0.content.take(content.length) should be (content)
       
       reopened ! PagedStorage.Read(PageIdx(1))
-      val page1 = expectMsgType[PagedStorage.ReadCompleted]
+      val page1 = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       page0.content.take(content.length) should be (content)
     }
     
@@ -124,7 +130,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     
     "create new pages into the next empty page" in new Fixture {
       val storage = open()
-      storage ! PagedStorage.Write(Map(PageIdx(0) -> content))
+      storage ! PagedStorage.Write(PageIdx(0) -> content)
       expectMsgType[PagedStorage.WriteCompleted]
       storage ! PagedStorage.Create(content)
       storage ! PagedStorage.Create(content)

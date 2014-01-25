@@ -71,3 +71,15 @@ values
     part: bytes
     next: (pagenumber: values, idx)
   ] *
+  
+  
+-------
+
+AtomicWrite (id=X1, pages = ..., otherWriters = [parent])
+  if other latest write in progress from [sender]
+    latestWrite.next = this
+    this.prev = latestWrite
+  if collected all other writes for (id, otherWriters)
+    if this write doesn't depend
+      finish this write
+        finish next (rec.)

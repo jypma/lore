@@ -5,13 +5,13 @@ import akka.actor.Actor
 import net.ypmania.storage.paged.PageIdx
 import akka.actor.ActorRef
 import net.ypmania.lore.ID
-import net.ypmania.storage.structured.StructuredStorage
+import net.ypmania.storage.paged.PagedStorage
 import akka.actor.Props
 import akka.actor.Stash
 import scala.collection.immutable.TreeMap
 import akka.dispatch.Envelope
 
-class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
+class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
                      (implicit val settings: BTree.Settings) 
                      extends Actor with Stash with ActorLogging {
   
@@ -20,10 +20,10 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
   import BTreePageWorker._
   
   log.debug(s"Starting worker for page ${pageIdx}")
-  structuredStorage ! StructuredStorage.Read[BTreePage](pageIdx)
+  pagedStorage ! PagedStorage.Read[BTreePage](pageIdx)
   
   def receive = {
-    case StructuredStorage.ReadCompleted(page: BTreePage, _) =>
+    case PagedStorage.ReadCompleted(page: BTreePage, _) =>
       log.debug(s"Page ${pageIdx} received as ${page}")
       unstashAll()
       context become active(page)
@@ -37,8 +37,8 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
       if (page.full) {
         log.debug(s"Splitting because of ${msg}")
         val (updated, key, right) = page.split
-        structuredStorage ! StructuredStorage.Write(pageIdx -> updated)
-        structuredStorage ! StructuredStorage.Create(right, PerformingSplit)
+        pagedStorage ! PagedStorage.Write(pageIdx -> updated)
+        pagedStorage ! PagedStorage.Create(right, PerformingSplit)
         context become splitting(updated, key, right)
         stash()
       } else if (page.internal) {
@@ -48,7 +48,7 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
       } else if (page.leaf) {
         val updated = page + (key -> value)
         log.debug(s"Writing ${updated}, replying to ${sender}")
-        structuredStorage ! StructuredStorage.Write(pageIdx -> updated)
+        pagedStorage ! PagedStorage.Write(pageIdx -> updated)
         sender ! PutCompleted(ctx)
         context become active(updated)
       }      
@@ -68,7 +68,7 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
     case Split(splitKey, newPageIdx, msgs) =>
       require (!page.full)
       val updated = page + (splitKey -> newPageIdx)
-      structuredStorage ! StructuredStorage.Write(pageIdx -> updated)
+      pagedStorage ! PagedStorage.Write(pageIdx -> updated)
       val child = childForPage(newPageIdx)
       for (msg <- msgs) {
         child.tell(msg.message, msg.sender)
@@ -81,7 +81,7 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
     var stashForRight = Vector.empty[Envelope]
     
     {
-      case StructuredStorage.CreateCompleted(rightPageIdx, PerformingSplit) =>
+      case PagedStorage.CreateCompleted(rightPageIdx, PerformingSplit) =>
         context.parent ! Split(splitKey, rightPageIdx, stashForRight)
         context become active(page)
         unstashAll()
@@ -98,7 +98,7 @@ class BTreePageWorker(structuredStorage: ActorRef, pageIdx: PageIdx)
       case Some(actor) => 
         actor
       case None =>
-        context.actorOf(Props(new BTreePageWorker(structuredStorage, page)), name)
+        context.actorOf(Props(new BTreePageWorker(pagedStorage, page)), name)
     }
   }
 }

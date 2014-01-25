@@ -2,7 +2,7 @@ package net.ypmania.storage.btree
 
 import akka.util.ByteString
 import scala.collection.immutable.VectorBuilder
-import net.ypmania.storage.structured.StructuredStorage
+import net.ypmania.storage.paged.PagedStorage
 import net.ypmania.lore.ID
 import net.ypmania.storage.paged.PageIdx
 import net.ypmania.lore.BinarySearch._
@@ -66,7 +66,7 @@ object BTreePage {
     def splitComplete(next: PageIdx) = BTreePage(leaf, pointers, next)
   }
   
-  implicit object Type extends StructuredStorage.PageType[BTreePage] {
+  implicit object Type extends PagedStorage.PageType[BTreePage] {
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val t = i.getByte

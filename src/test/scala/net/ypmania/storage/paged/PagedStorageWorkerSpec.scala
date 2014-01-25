@@ -18,6 +18,11 @@ import akka.util.ByteString
 
 class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
+  implicit val byteStringPageType = new PagedStorage.PageType[ByteString] {
+    def fromByteString(page: ByteString) = page
+    def toByteString(page: ByteString) = page
+  }
+  
   class Fixture(val initialPages:Int = 0, 
                 val initialJournalIndex:Map[PageIdx, Long] = Map.empty)  {
     val dataFile = TestProbe()
@@ -42,10 +47,10 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     }
     
     "return written content while still writing it" in new Fixture {
-      f ! PagedStorage.Write(PageIdx(0), content)
+      f ! PagedStorage.Write(PageIdx(0) -> content)
       val write = journalFile.expectMsgType[FileActor.Write]
       f ! PagedStorage.Read(PageIdx(0))
-      val hasread = expectMsgType[PagedStorage.ReadCompleted]
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (content)
       
       journalFile.reply(FileActor.WriteCompleted(write.ctx))
@@ -53,7 +58,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     }
     
     "return content after storing it in the journal" in new Fixture {
-      f ! PagedStorage.Write(PageIdx(0), content)
+      f ! PagedStorage.Write(PageIdx(0) -> content)
       val write = journalFile.expectMsgType[FileActor.Write]
       write.at should be (JournalHeader.size)
       //TODO move this to JournalEntrySpec
@@ -68,13 +73,13 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       journalFile.reply(FileActor.WriteCompleted(write.ctx))
       val haswritten = expectMsgType[PagedStorage.WriteCompleted]
       
-      f ! PagedStorage.Read(PageIdx(0))
+      f ! PagedStorage.Read[ByteString](PageIdx(0))
       val read = journalFile.expectMsgType[FileActor.Read]
       // after MD5 (16 bytes) + #pages (4 bytes) + pagenumber (4 bytes) 
       read.from should be (JournalHeader.size + 24) 
       read.size should be (dataHeader.pageSize)
       journalFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
-      val hasread = expectMsgType[PagedStorage.ReadCompleted]
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)
     }
     
@@ -88,7 +93,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       read.from should be (24) 
       read.size should be (dataHeader.pageSize)
       journalFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
-      val hasread = expectMsgType[PagedStorage.ReadCompleted]
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)      
     }
     
@@ -100,12 +105,12 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       read.from should be (DataHeader.size)
       read.size should be (dataHeader.pageSize)
       dataFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
-      val hasread = expectMsgType[PagedStorage.ReadCompleted]
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)            
     }
     
     "write all pages of a multi-page write message" in new Fixture {
-      f ! PagedStorage.Write(Map(PageIdx(0) -> content, PageIdx(1) -> content))
+      f ! (PagedStorage.Write(PageIdx(0) -> content) + (PageIdx(1) -> content))
       val write = journalFile.expectMsgType[FileActor.Write]
       write.at should be (JournalHeader.size)
       write.bytes.size should be (dataHeader.pageSize * 2 + // content of two pages

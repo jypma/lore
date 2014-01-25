@@ -25,7 +25,7 @@ trait PagedStorageWorker extends Actor with ActorLogging {
       inProgress -= 1;  
     }
   }
-  private case class Reading(sender: ActorRef, read: Read)
+  private case class Reading[T <: AnyRef](sender: ActorRef, read: Read[T])
   private case class Writing(entry: WriteQueueEntry, page: PageIdx)
   
   def work(dataFile: ActorRef, journalFile: ActorRef, dataHeader: DataHeader, journalHeader: JournalHeader, 
@@ -39,7 +39,7 @@ trait PagedStorageWorker extends Actor with ActorLogging {
     var writing = collection.mutable.Map.empty[PageIdx, WriteQueueEntry]
   
     def performWrite(q: WriteQueueEntry) {
-      val journalEntry = JournalEntry(journalHeader, q.write.pages)
+      val journalEntry = JournalEntry(journalHeader, q.write.pageBytes)
       val content = journalEntry.toByteString
       journalFile ! FileActor.Write(journalPos, content, q)
       
@@ -68,14 +68,14 @@ trait PagedStorageWorker extends Actor with ActorLogging {
     }
     
     context.become {
-      case read:Read =>
+      case read:Read[_] =>
         log.debug(s"processing read for ${sender}")
         if (read.page >= pageCount) 
           throw new Exception (s"Trying to read page ${read.page} but only have ${pageCount}")
         writing.get(read.page).map { entry =>
           log.debug(s"Replying in-transit write content to ${sender}")
           val contentBeingWritten = entry.write.pages(read.page)
-          sender ! ReadCompleted(contentBeingWritten, read.ctx)
+          sender ! ReadCompleted(contentBeingWritten._2, read.ctx)
         }.getOrElse {
           journalIndex.get(read.page).map { pos =>
             log.debug(s"Found page ${read.page} in journal at pos ${pos}")
@@ -88,11 +88,11 @@ trait PagedStorageWorker extends Actor with ActorLogging {
         }
         
       case FileActor.ReadCompleted(content, Reading(replyTo, read)) =>  
-       replyTo ! ReadCompleted(content, read.ctx)
+       replyTo ! ReadCompleted(read.pageType.fromByteString(content), read.ctx)
         
       case write:Write =>
         //TODO also remove this page from freelist
-        write.pages.foreach { case (page, content) =>
+        write.pageBytes.foreach { case (page, content) =>
           if (content.length > journalHeader.pageSize) 
       	  throw new Exception(s"Content length ${content.length} for page ${page} overflows page size ${journalHeader.pageSize}")
         }
@@ -120,9 +120,10 @@ trait PagedStorageWorker extends Actor with ActorLogging {
         //log.debug("Journal synced, poisining ourselves")
         self ! PoisonPill
         
-      case Create(content, ctx) =>
+      case create: Create[_] =>
+        import create.pageType
         //TODO also update freelist with this page
-        self ! Write(pageCount, content, Creating(sender, CreateCompleted(pageCount, ctx)))
+        self ! Write(pageCount -> create.content, Creating(sender, CreateCompleted(pageCount, create.ctx)))
         pageCount += 1
 
       case WriteCompleted(Creating(client, response)) =>

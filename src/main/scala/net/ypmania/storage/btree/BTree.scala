@@ -8,10 +8,10 @@ import net.ypmania.lore.ID
 import akka.dispatch.Envelope
 import akka.actor.Props
 import scala.collection.immutable.TreeMap
-import net.ypmania.storage.structured.StructuredStorage
+import net.ypmania.storage.paged.PagedStorage
 import akka.actor.Stash
 
-class BTree(structuredStorage: ActorRef, initialRootPageIdx: PageIdx)
+class BTree(pagedStorage: ActorRef, initialRootPageIdx: PageIdx)
            (implicit val settings: BTree.Settings)
            extends Actor with Stash with ActorLogging {
   import BTree._
@@ -21,7 +21,7 @@ class BTree(structuredStorage: ActorRef, initialRootPageIdx: PageIdx)
       // create new root with one key
       context.stop(root)
       val page = BTreePage(false, TreeMap(s.splitKey -> rootPage), s.newPageIdx)
-      structuredStorage ! StructuredStorage.Create(page)
+      pagedStorage ! PagedStorage.Create(page)
       context become splitting(rootPage, s)
       
     case msg =>
@@ -29,7 +29,7 @@ class BTree(structuredStorage: ActorRef, initialRootPageIdx: PageIdx)
   }
   
   def splitting(rootPage: PageIdx, s: Split): Receive = {
-    case StructuredStorage.CreateCompleted(newRootPageIdx, _) =>
+    case PagedStorage.CreateCompleted(newRootPageIdx, _) =>
       context become active (workerActorOf(newRootPageIdx), newRootPageIdx)
       unstashAll()
       
@@ -43,7 +43,7 @@ class BTree(structuredStorage: ActorRef, initialRootPageIdx: PageIdx)
   }
   
   def workerActorOf(page: PageIdx) = context.actorOf(
-      Props(new BTreePageWorker(structuredStorage, page)), 
+      Props(new BTreePageWorker(pagedStorage, page)), 
       page.toInt.toString)
 }
 

@@ -11,18 +11,18 @@ import akka.testkit.TestProbe
 import akka.testkit.TestActorRef
 import akka.actor.Props
 import net.ypmania.storage.paged.PageIdx
-import net.ypmania.storage.structured.StructuredStorage
 import net.ypmania.lore.ID
+import net.ypmania.storage.paged.PagedStorage
 
 class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
   class Fixture {
     implicit val settings = BTree.Settings(order = 2)
-    val structuredStorage = TestProbe()
-    val tree = system.actorOf(Props(new BTree(structuredStorage.ref, PageIdx(0))))
+    val pagedStorage = TestProbe()
+    val tree = system.actorOf(Props(new BTree(pagedStorage.ref, PageIdx(0))))
     
-    val r = structuredStorage.expectMsgType[StructuredStorage.Read[_]]
-    structuredStorage reply StructuredStorage.ReadCompleted(BTreePage.empty, r.ctx)
+    val r = pagedStorage.expectMsgType[PagedStorage.Read[BTreePage]]
+    pagedStorage reply PagedStorage.ReadCompleted(BTreePage.empty, r.ctx)
   }
   
   "A B+Tree" should {
@@ -38,7 +38,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       tree ! BTree.Put(id, page)
       expectMsgType[BTree.PutCompleted]
       
-      val written = structuredStorage.expectMsgType[StructuredStorage.Write]
+      val written = pagedStorage.expectMsgType[PagedStorage.Write]
       val content = written.pages(PageIdx(0))._2.asInstanceOf[BTreePage]
       content.get(id) should be (Some(page))
       
@@ -50,8 +50,8 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       for (i <- 1 to 3) {
         tree ! BTree.Put(ID.forBranch, PageIdx(123))
         expectMsgType[BTree.PutCompleted]
-        val written = structuredStorage.expectMsgType[StructuredStorage.Write]
-        structuredStorage reply StructuredStorage.WriteCompleted(written.ctx)
+        val written = pagedStorage.expectMsgType[PagedStorage.Write]
+        pagedStorage reply PagedStorage.WriteCompleted(written.ctx)
       }
       tree ! BTree.Put(ID.forBranch, PageIdx(123))
       
