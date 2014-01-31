@@ -114,8 +114,10 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     
     "refuse to open a zero-size data" in new Fixture {
       new FileOutputStream(filename).getChannel().truncate(0).force(true)
-      open()
+      val storage = open()
+      watch(storage)
       expectMsgType[Failure[_]]
+      expectTerminated(storage, 2.seconds)      
     }
     
     "refuse to open a data file with wrong magic" in new Fixture {

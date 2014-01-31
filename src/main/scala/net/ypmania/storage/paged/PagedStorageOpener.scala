@@ -1,9 +1,5 @@
 package net.ypmania.storage.paged
 
-import java.nio.file.Paths
-import java.nio.file.StandardOpenOption.CREATE
-import java.nio.file.StandardOpenOption.READ
-import java.nio.file.StandardOpenOption.WRITE
 import net.ypmania.io.FileActor
 import net.ypmania.io.IO._
 import akka.actor.Actor
@@ -13,32 +9,27 @@ import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 import akka.actor.Stash
 
-trait PagedStorageOpener {
-  this: Actor with Stash with ActorLogging with PagedStorageWorker =>
-    
-  import PagedStorage._
+class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: ActorRef) extends Actor with ActorLogging {
 
-  override val supervisorStrategy = OneForOneStrategy() {
-    case x:IllegalStateException => SupervisorStrategy.Escalate
-  }
+  def receive = { case _ => } 
   
-  def open (filename: String): Unit = {
-    val dataFile = context.actorOf(FileActor.props(
-        Paths.get(filename), Seq(READ, WRITE, CREATE)), "d")
+  open()
+  def open (): Unit = {
+    dataFile ! FileActor.GetState
     var dataFileSize: Long = 0
     var dataHeader: DataHeader = null
         
     context.become {      
-      case FileActor.OpenedNew  =>
+      case FileActor.New =>
         log.debug("Opened new data")
         dataHeader = DataHeader()
         dataFile ! FileActor.Write(0, dataHeader.toByteString)
         dataFile ! FileActor.Sync()
         
       case FileActor.SyncCompleted(_) =>
-        createJournal(filename, dataFile, dataHeader)
+        createJournal(dataHeader, PageIdx(0))
   
-      case FileActor.OpenedExisting(size) =>
+      case FileActor.Existing(size) =>
         log.debug("Opened existing data of size {}", size)
         dataFileSize = size
         dataFile ! FileActor.Read(0, DataHeader.size)
@@ -51,44 +42,24 @@ trait PagedStorageOpener {
           throw new IllegalStateException("data file invalid")
         }
         val pageCount = dataHeader.pageCount(dataFileSize)
-        readJournal(filename, dataFile, dataHeader, pageCount)
-        
-      case _ => stash()
+        readJournal(dataHeader, pageCount)
     }
   }
   
-  def journalProps(filename: String) = 
-    FileActor.props(Paths.get(filename + ".j"), Seq(READ, WRITE, CREATE))
-  
-  def initializeJournal(dataHeader: DataHeader, dataFile: ActorRef, 
-      journalFile: ActorRef, pageCount: PageIdx): Unit = {
-    
+  def createJournal(dataHeader: DataHeader, pageCount: PageIdx): Unit = {
     val journalHeader = JournalHeader(dataHeader)
     journalFile ! FileActor.Write(0, journalHeader.toByteString)
-//    journalFile ! FileActor.Sync()
-    unstashAll()
-    work(
-      dataFile, journalFile, dataHeader, journalHeader, Map.empty, 
-      pageCount, JournalHeader.size)
+    journalFile ! FileActor.Sync()
+    
+    client ! PagedStorage.InitialState(dataHeader, journalHeader, Map.empty, pageCount, JournalHeader.size)
   }
     
-  def createJournal(filename: String, dataFile: ActorRef, dataHeader: DataHeader): Unit = {
-    val journalFile = context.actorOf(journalProps(filename), "j")
-    
-    context.become {
-      case open:FileActor.Opened =>
-        initializeJournal(dataHeader, dataFile, journalFile, PageIdx(0))
-      case _ => stash()
-    }
-  } 
-        
-  def readJournal(filename: String, dataFile: ActorRef, dataHeader: DataHeader, 
-      dataPageCount: PageIdx): Unit = {
+  def readJournal(dataHeader: DataHeader, dataPageCount: PageIdx): Unit = {
     case object ReadJournalHeader
     case object ReadJournalEntrySize
     case object ReadJournalEntryPages
 
-    val journalFile = context.actorOf(journalProps(filename), "j")
+    journalFile ! FileActor.GetState
     var journalHeader: JournalHeader = null
     var journalFileSize = 0l
     var journalPos = 0l
@@ -105,10 +76,7 @@ trait PagedStorageOpener {
         log.debug("journal index: {}", journalIndex.result)
         log.debug(s"Finished parsing. Journal pos ${journalPos} of ${journalFileSize}")
         
-        unstashAll()
-        work(
-          dataFile, journalFile, dataHeader, journalHeader, journalIndex.result, 
-          pageCount, journalPos)
+        client ! PagedStorage.InitialState(dataHeader, journalHeader, journalIndex.result, pageCount, journalPos)
       }
     }
     
@@ -125,14 +93,14 @@ trait PagedStorageOpener {
     }
     
     context.become {
-      case FileActor.OpenedNew =>
+      case FileActor.New =>
         log.debug("Opened new journal")
-        initializeJournal(dataHeader, dataFile, journalFile, pageCount)
+        createJournal(dataHeader, pageCount)
 
-      case FileActor.OpenedExisting(size) =>
+      case FileActor.Existing(size) =>
         log.debug("Opened existing journal of size {}", size)
         if (size < JournalHeader.size) {
-          initializeJournal(dataHeader, dataFile, journalFile, pageCount)
+          createJournal(dataHeader, pageCount)
         } else {
           journalFileSize = size;
           journalFile ! FileActor.Read(0, JournalHeader.size, ReadJournalHeader)
@@ -168,8 +136,6 @@ trait PagedStorageOpener {
         }
         journalPos += SizeOf.MD5
         readNextJournalEntrySize()
-  
-      case _ => stash()
     }
   }
 }

@@ -1,35 +1,38 @@
 package net.ypmania.io
 
-import akka.actor.Actor
-import java.nio.file.Path
-import java.nio.file.OpenOption
-import java.nio.channels.AsynchronousFileChannel
-import FileActor._
-import akka.util.ByteString
 import java.nio.ByteBuffer
+import java.nio.channels.AsynchronousFileChannel
 import java.nio.channels.CompletionHandler
-import akka.actor.Status
-import akka.actor.ActorRef
-import akka.actor.Props
-import akka.actor.ActorLogging
-import java.io.IOException
+import java.nio.file.OpenOption
+import java.nio.file.Path
+
 import scala.concurrent.Future
-import akka.pattern.pipe
-import akka.actor.Stash
-import scala.util.Try
 import scala.util.Failure
 import scala.util.Success
+import scala.util.Try
+
+import akka.actor.Actor
+import akka.actor.ActorLogging
+import akka.actor.ActorRef
+import akka.actor.Props
+import akka.actor.Stash
+import akka.pattern.pipe
+import akka.util.ByteString
 
 class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash with ActorLogging {
+  import FileActor._
+  
   var channel: AsynchronousFileChannel = _
-  var writers = 0
+  var writers: Int = 0
+  var state: State = _
   
   def receive = {
-    case Ready(c, opened) =>
+    case Ready(c, newState) =>
       channel = c
+      state = newState
+      writers = 0
       unstashAll()
       context.become(open)
-      context.parent ! opened
       
     case _ => 
       stash()
@@ -38,11 +41,11 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
   override def preStart {
     import context.dispatcher 
     Future { 
-      val opened = (if (path.toFile.exists) 
-                          OpenedExisting(path.toFile.length) 
+      val state = (if (path.toFile.exists) 
+                          Existing(path.toFile.length) 
                         else 
-                          OpenedNew)
-      Ready(AsynchronousFileChannel.open(path, options: _*), opened)
+                          New)
+      Ready(AsynchronousFileChannel.open(path, options: _*), state)
     } pipeTo self
   }
   
@@ -53,6 +56,9 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
   }
   
   def open: Receive = {
+    case GetState =>
+      sender ! state
+    
     case Read(from, size, ctx) =>
       log.debug("Reading {} bytes at {}", size, from)
       val replyTo = sender
@@ -70,7 +76,9 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
       })
       
     case Write(at, bytes, ctx) =>
-      log.debug("Writing {} bytes at {}", bytes.asByteBuffer.remaining(), at)
+      val size = bytes.asByteBuffer.remaining()
+      log.debug("Writing {} bytes at {}", size, at)
+      state = state.growTo(at + size)
       val replyTo = sender
       writers += 1
       channel.write(bytes.asByteBuffer, at, null, new CompletionHandler[Integer, Null] {
@@ -118,10 +126,17 @@ object FileActor {
   case class Sync(ctx: AnyRef = null)
   case class SyncCompleted(ctx: AnyRef)
   
-  sealed trait Opened
-  case object OpenedNew extends Opened
-  case class OpenedExisting(size: Long) extends Opened
+  case object GetState
+  sealed trait State {
+    def growTo(size: Long): Existing
+  }
+  case object New extends State {
+    def growTo(size: Long) = new Existing(size)
+  }
+  case class Existing(size: Long) extends State {
+    def growTo(newSize: Long) = if (newSize <= size) this else new Existing(newSize)
+  }
   
-  private case class Ready(channel: AsynchronousFileChannel, opened: Opened)
+  private case class Ready(channel: AsynchronousFileChannel, state: State)
   private case class WriteDone(sender: ActorRef, result:Try[WriteCompleted])
 }
