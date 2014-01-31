@@ -21,7 +21,7 @@ class StructuredStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSe
   class Fixture {
     val r = Random.nextInt
     val filename = "/tmp/PagedFileSpec" + r 
-    val s = TestActorRef(Props(new PagedStorage(filename)))
+    val s = system.actorOf(Props(new PagedStorage(filename)))
   }
   
   implicit object StringType extends PageType[String] {
