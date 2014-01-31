@@ -14,8 +14,11 @@ import akka.actor.Props
 import akka.actor.ActorLogging
 import java.io.IOException
 import scala.concurrent.Future
-import akka.pattern.pipe;
+import akka.pattern.pipe
 import akka.actor.Stash
+import scala.util.Try
+import scala.util.Failure
+import scala.util.Success
 
 class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash with ActorLogging {
   var channel: AsynchronousFileChannel = _
@@ -62,7 +65,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
         }
         
         override def failed(error: Throwable, attachment: Null) {
-          replyTo ! Status.Failure(error)
+          self ! Failure(error)
         }
       })
       
@@ -72,18 +75,21 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
       writers += 1
       channel.write(bytes.asByteBuffer, at, null, new CompletionHandler[Integer, Null] {
         override def completed(result: Integer, attachment: Null) {
-          self ! WriteDone(replyTo, WriteCompleted(ctx))
+          self ! WriteDone(replyTo, Success(WriteCompleted(ctx)))
         }
         
         override def failed(error: Throwable, attachment: Null) {
-          self ! WriteDone(replyTo, Status.Failure(error))
+          self ! WriteDone(replyTo, Failure(error))
         }
       })
       
-    case WriteDone(client, response) =>
+    case WriteDone(client, result) =>
       writers -= 1
       if (writers <= 0) unstashAll()
-      client ! response
+      result match {
+        case Success(msg) => client ! msg
+        case failed:Failure[_] => self ! failed
+      }
       
     case Sync(ctx) =>
       if (writers > 0) {
@@ -92,9 +98,10 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
         channel.force(true)
         log.debug("Synced")
         sender ! SyncCompleted(ctx)
-      } catch {
-        case x:IOException => sender ! Status.Failure(x)
-      }
+      } 
+
+    case Failure(error) =>
+      throw error
   }
 }
 
@@ -116,5 +123,5 @@ object FileActor {
   case class OpenedExisting(size: Long) extends Opened
   
   private case class Ready(channel: AsynchronousFileChannel, opened: Opened)
-  private case class WriteDone(sender: ActorRef, response: AnyRef)
+  private case class WriteDone(sender: ActorRef, result:Try[WriteCompleted])
 }
