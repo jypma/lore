@@ -59,7 +59,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
     case GetState =>
       sender ! state
     
-    case Read(from, size, ctx) =>
+    case Read(from, size) =>
       log.debug("Reading {} bytes at {}", size, from)
       val replyTo = sender
       val buf = ByteBuffer.allocate(size)
@@ -67,7 +67,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
         override def completed(result: Integer, attachment: Null) {
           buf.rewind()
           log.debug("Got {} bytes, result {}", buf.remaining(), result)
-          replyTo ! ReadCompleted(ByteString(buf), ctx)
+          replyTo ! ReadCompleted(ByteString(buf))
         }
         
         override def failed(error: Throwable, attachment: Null) {
@@ -75,7 +75,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
         }
       })
       
-    case Write(at, bytes, ctx) =>
+    case Write(at, bytes) =>
       val size = bytes.asByteBuffer.remaining()
       log.debug("Writing {} bytes at {}", size, at)
       state = state.growTo(at + size)
@@ -83,7 +83,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
       writers += 1
       channel.write(bytes.asByteBuffer, at, null, new CompletionHandler[Integer, Null] {
         override def completed(result: Integer, attachment: Null) {
-          self ! WriteDone(replyTo, Success(WriteCompleted(ctx)))
+          self ! WriteDone(replyTo, Success(WriteCompleted))
         }
         
         override def failed(error: Throwable, attachment: Null) {
@@ -99,13 +99,14 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
         case failed:Failure[_] => self ! failed
       }
       
-    case Sync(ctx) =>
+    case Sync =>
       if (writers > 0) {
         stash()
-      } else try { 
+      } else try {
+        // Should this be in a Future { } block since it's blocking?
         channel.force(true)
         log.debug("Synced")
-        sender ! SyncCompleted(ctx)
+        sender ! SyncCompleted
       } 
 
     case Failure(error) =>
@@ -117,14 +118,14 @@ object FileActor {
   def props(path: Path, options: Seq[OpenOption]) = 
     Props(classOf[FileActor], path, options)
   
-  case class Read(from: Long, size: Int, ctx:AnyRef = null)
-  case class ReadCompleted(bytes: ByteString, ctx:AnyRef)
+  case class Read(from: Long, size: Int)
+  case class ReadCompleted(bytes: ByteString)
   
-  case class Write(at: Long, bytes: ByteString, ctx: AnyRef = null)
-  case class WriteCompleted(ctx: AnyRef)
+  case class Write(at: Long, bytes: ByteString)
+  case object WriteCompleted
   
-  case class Sync(ctx: AnyRef = null)
-  case class SyncCompleted(ctx: AnyRef)
+  case object Sync
+  case object SyncCompleted
   
   case object GetState
   sealed trait State {
@@ -138,5 +139,5 @@ object FileActor {
   }
   
   private case class Ready(channel: AsynchronousFileChannel, state: State)
-  private case class WriteDone(sender: ActorRef, result:Try[WriteCompleted])
+  private case class WriteDone(sender: ActorRef, result:Try[WriteCompleted.type])
 }

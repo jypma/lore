@@ -4,7 +4,6 @@ import java.nio.file.Paths
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.WRITE
-
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -13,13 +12,20 @@ import akka.actor.Props
 import akka.actor.Stash
 import akka.actor.SupervisorStrategy
 import akka.actor.Terminated
+import akka.pattern.pipe
+import akka.pattern.ask
 import akka.util.ByteString
 import net.ypmania.io.FileActor
 import net.ypmania.io.IO
 import net.ypmania.io.IO.SizeOf
+import akka.util.Timeout
+import scala.concurrent.duration._
 
 class PagedStorage(filename: String) extends Actor with Stash with ActorLogging {
   import PagedStorage._
+  
+  implicit val timeout = Timeout(1.minute)
+  implicit val executionContext = context.dispatcher
   
   override val supervisorStrategy = SupervisorStrategy.stoppingStrategy
   
@@ -47,6 +53,11 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
       stash()
   } 
   
+  private def readFrom(file: ActorRef, pos: Long, size: Int)(conv: ByteString => AnyRef) {
+    import FileActor._
+    file ? Read(pos, size) map { case ReadCompleted(bytes) => conv(bytes) } pipeTo self    
+  }
+  
   def work(initial: InitialState): Unit = {
       
     import initial.journalHeader
@@ -61,7 +72,9 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     def performWrite(q: WriteQueueEntry) {
       val journalEntry = JournalEntry(journalHeader, q.write.pageBytes)
       val content = journalEntry.toByteString
-      journalFile ! FileActor.Write(journalPos, content, q)
+      journalFile ? FileActor.Write(journalPos, content) map {
+        case FileActor.WriteCompleted => QueueEntryWritten(q)
+      } pipeTo self
       
       journalPos += SizeOf.MD5
       journalPos += SizeOf.Int // number of pages
@@ -84,7 +97,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     }
     
     def sync() {
-      journalFile ! FileActor.Sync(SyncForShutdown)
+      journalFile ? FileActor.Sync map { _ => SyncForShutdown} pipeTo self
     }
     
     context.become {
@@ -99,15 +112,17 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         }.getOrElse {
           journalIndex.get(read.page).map { pos =>
             log.debug(s"Found page ${read.page} in journal at pos ${pos}")
-            journalFile ! FileActor.Read(pos, journalHeader.pageSize, Reading(sender, read))
+            val client = sender
+            readFrom(journalFile, pos, journalHeader.pageSize)(PageRead(_, client, read))
           }.getOrElse {
             val pos = dataHeader.offsetForPage(read.page)
+            val client = sender
             log.debug(s"Reading page ${read.page} from data at pos ${pos} for ${sender}")
-            dataFile ! FileActor.Read(pos, dataHeader.pageSize, Reading(sender, read))          
+            readFrom(dataFile, pos, dataHeader.pageSize)(PageRead(_, client, read))
           }  
         }
         
-      case FileActor.ReadCompleted(content, Reading(replyTo, read)) =>  
+      case PageRead(content, replyTo, read) =>  
        replyTo ! ReadCompleted(read.pageType.fromByteString(content), read.ctx)
         
       case write:Write =>
@@ -123,7 +138,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
           writeQueue :+= q
         }
         
-      case FileActor.WriteCompleted(entry:WriteQueueEntry) =>
+      case QueueEntryWritten(entry:WriteQueueEntry) =>
         entry.sender ! WriteCompleted(entry.write.ctx)
         entry.write.pages.keys.foreach(writing.remove)
         if (!writing.isEmpty) {
@@ -136,7 +151,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         emptyWriteQueue()
         sync()
         
-      case FileActor.SyncCompleted(SyncForShutdown) =>
+      case SyncForShutdown =>
         //log.debug("Journal synced, poisining ourselves")
         self ! PoisonPill
         
@@ -161,7 +176,7 @@ object PagedStorage {
     def toByteString(page: T): ByteString
   }
   
-  private case class Reading[T <: AnyRef](sender: ActorRef, read: Read[T])
+  private case class PageRead[T <: AnyRef](bytes: ByteString, sender: ActorRef, read: Read[T])
   private case class WriteQueueEntry (sender: ActorRef, write: Write) {
     private var inProgress = write.pages.size
     def done = { inProgress <= 0 }
@@ -171,7 +186,7 @@ object PagedStorage {
     }
   }
   
-  private case class Writing(entry: WriteQueueEntry, page: PageIdx)
+  private case class QueueEntryWritten(entry: WriteQueueEntry)
   private case class Creating (sender: ActorRef, response: CreateCompleted)
   private case object SyncForShutdown
     

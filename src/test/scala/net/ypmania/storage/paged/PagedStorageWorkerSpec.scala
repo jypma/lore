@@ -60,7 +60,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (content)
       
-      journalFile.reply(FileActor.WriteCompleted(write.ctx))
+      journalFile.reply(FileActor.WriteCompleted)
       val haswritten = expectMsgType[PagedStorage.WriteCompleted]
     }
     
@@ -77,7 +77,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       write.bytes.slice (0, 8).toList should be (1 :: 0 :: 0 :: 0 :: 
                                                  0 :: 0 :: 0 :: 0 :: Nil)
       
-      journalFile.reply(FileActor.WriteCompleted(write.ctx))
+      journalFile.reply(FileActor.WriteCompleted)
       val haswritten = expectMsgType[PagedStorage.WriteCompleted]
       
       f ! PagedStorage.Read[ByteString](PageIdx(0))
@@ -85,7 +85,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       // after MD5 (16 bytes) + #pages (4 bytes) + pagenumber (4 bytes) 
       read.from should be (JournalHeader.size + 24) 
       read.size should be (dataHeader.pageSize)
-      journalFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
+      journalFile.reply(FileActor.ReadCompleted(pageContent))
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)
     }
@@ -99,7 +99,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       // should read from the value in initialJournalIndex
       read.from should be (24) 
       read.size should be (dataHeader.pageSize)
-      journalFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
+      journalFile.reply(FileActor.ReadCompleted(pageContent))
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)      
     }
@@ -111,7 +111,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       val read = dataFile.expectMsgType[FileActor.Read]
       read.from should be (DataHeader.size)
       read.size should be (dataHeader.pageSize)
-      dataFile.reply(FileActor.ReadCompleted(pageContent, read.ctx))
+      dataFile.reply(FileActor.ReadCompleted(pageContent))
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)            
     }
