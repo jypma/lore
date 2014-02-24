@@ -23,7 +23,7 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
   pagedStorage ! PagedStorage.Read[BTreePage](pageIdx)
   
   def receive = {
-    case PagedStorage.ReadCompleted(page: BTreePage, _) =>
+    case PagedStorage.ReadCompleted(page: BTreePage) =>
       log.debug(s"Page ${pageIdx} received as ${page}")
       unstashAll()
       context become active(page)
@@ -38,7 +38,7 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
         log.debug(s"Splitting because of ${msg}")
         val (updated, key, right) = page.split
         pagedStorage ! PagedStorage.Write(pageIdx -> updated)
-        pagedStorage ! PagedStorage.Create(right, PerformingSplit)
+        pagedStorage ! PagedStorage.Create(right)
         context become splitting(updated, key, right)
         stash()
       } else if (page.internal) {
@@ -81,7 +81,7 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
     var stashForRight = Vector.empty[Envelope]
     
     {
-      case PagedStorage.CreateCompleted(rightPageIdx, PerformingSplit) =>
+      case PagedStorage.CreateCompleted(rightPageIdx) =>
         context.parent ! Split(splitKey, rightPageIdx, stashForRight)
         context become active(page)
         unstashAll()
@@ -104,5 +104,4 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
 }
 
 object BTreePageWorker {
-  case object PerformingSplit
 }

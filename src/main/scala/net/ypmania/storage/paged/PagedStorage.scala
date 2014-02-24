@@ -108,22 +108,22 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         writing.get(read.page).map { entry =>
           log.debug(s"Replying in-transit write content to ${sender}")
           val contentBeingWritten = entry.write.pages(read.page)
-          sender ! ReadCompleted(contentBeingWritten._2, read.ctx)
+          sender ! ReadCompleted(contentBeingWritten.content)
         }.getOrElse {
           journalIndex.get(read.page).map { pos =>
             log.debug(s"Found page ${read.page} in journal at pos ${pos}")
             val client = sender
-            readFrom(journalFile, pos, journalHeader.pageSize)(PageRead(_, client, read))
+            readFrom(journalFile, pos, journalHeader.pageSize)(read.haveRead(_, client))
           }.getOrElse {
             val pos = dataHeader.offsetForPage(read.page)
             val client = sender
             log.debug(s"Reading page ${read.page} from data at pos ${pos} for ${sender}")
-            readFrom(dataFile, pos, dataHeader.pageSize)(PageRead(_, client, read))
+            readFrom(dataFile, pos, dataHeader.pageSize)(read.haveRead(_, client))
           }  
         }
         
-      case PageRead(content, replyTo, read) =>  
-       replyTo ! ReadCompleted(read.pageType.fromByteString(content), read.ctx)
+      case read @ HaveReadPage(_, replyTo) =>  
+       replyTo ! ReadCompleted(read.value)
         
       case write:Write =>
         //TODO also remove this page from freelist
@@ -139,7 +139,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         }
         
       case QueueEntryWritten(entry:WriteQueueEntry) =>
-        entry.sender ! WriteCompleted(entry.write.ctx)
+        entry.sender ! WriteCompleted
         entry.write.pages.keys.foreach(writing.remove)
         if (!writing.isEmpty) {
           log.warning("Writing log was not empty after completing a write. Concurrency bug.")
@@ -158,25 +158,25 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
       case create: Create[_] =>
         import create.pageType
         //TODO also update freelist with this page
-        self ! Write(pageCount -> create.content, Creating(sender, CreateCompleted(pageCount, create.ctx)))
+        val page = pageCount
+        self ? Write(page -> create.content) map (_ => CreateCompleted(page)) pipeTo sender
         pageCount += 1
-
-      case WriteCompleted(Creating(client, response)) =>
-        client ! response
       }
   }
 }
 
 
 object PagedStorage {
-  trait PageType[T <: AnyRef] {
+  trait PageType[T] {
     protected implicit val byteOrder = IO.byteOrder
     
     def fromByteString(page: ByteString): T
     def toByteString(page: T): ByteString
   }
   
-  private case class PageRead[T <: AnyRef](bytes: ByteString, sender: ActorRef, read: Read[T])
+  private case class HaveReadPage[T : PageType](bytes: ByteString, sender: ActorRef) {
+    def value = implicitly[PageType[T]].fromByteString(bytes)
+  }
   private case class WriteQueueEntry (sender: ActorRef, write: Write) {
     private var inProgress = write.pages.size
     def done = { inProgress <= 0 }
@@ -194,22 +194,26 @@ object PagedStorage {
       dataHeader: DataHeader, journalHeader: JournalHeader, 
       journalIndex: Map[PageIdx, Long], pageCount: PageIdx, journalPos: Long)
   
-  case class Read[T <: AnyRef] (page: PageIdx, ctx: AnyRef = None)(implicit val pageType: PageType[T])
-  case class ReadCompleted[T <: AnyRef] (content: T, ctx: AnyRef) 
-  
-  case class Write private (pages: Map[PageIdx, (PageType[AnyRef], AnyRef)], ctx: AnyRef) {
-    def +[T <: AnyRef] (entry: (PageIdx, T))(implicit pageType: PageType[T]) =
-      copy (pages = pages + ((entry._1, ((pageType.asInstanceOf[PageType[AnyRef]], entry._2)))))    
-    lazy val pageBytes = pages.mapValues { case (pageType, value) => pageType.toByteString(value) }
+  case class Read[T: PageType] (page: PageIdx) {
+    private[PagedStorage] def haveRead(bytes: ByteString, sender: ActorRef) = HaveReadPage(bytes, sender)
+  }
+  case class ReadCompleted[T] (content: T) 
+ 
+  case class WriteContent[T: PageType](content: T) {
+    def toByteString = implicitly[PageType[T]].toByteString(content) 
+  } 
+  case class Write private (pages: Map[PageIdx, WriteContent[_]]) {
+    def +[T: PageType] (entry: (PageIdx, T)) =
+      copy (pages = pages + (entry._1 -> WriteContent(entry._2)))    
+    lazy val pageBytes = pages.mapValues { _.toByteString }
   }
   object Write {
-    def apply[T <: AnyRef](entry: (PageIdx, T), ctx: AnyRef = None)(implicit pageType: PageType[T]):Write = 
-      new Write(Map.empty, ctx) + entry
+    def apply[T: PageType](entry: (PageIdx, T)):Write = new Write(Map.empty) + entry
   }
-  case class WriteCompleted(ctx: AnyRef)
+  case object WriteCompleted
 
-  case class Create[T <: AnyRef](content: T, ctx: AnyRef = None)(implicit val pageType: PageType[T]) 
-  case class CreateCompleted(page: PageIdx, ctx: AnyRef)
+  case class Create[T <: AnyRef](content: T)(implicit val pageType: PageType[T]) 
+  case class CreateCompleted(page: PageIdx)
   
   case object Shutdown
 }

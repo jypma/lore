@@ -77,8 +77,8 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       val storage = open()
       storage ! PagedStorage.Write(PageIdx(0) -> content)
       storage ! PagedStorage.Write(PageIdx(1) -> content)
-      expectMsgType[PagedStorage.WriteCompleted]
-      expectMsgType[PagedStorage.WriteCompleted]
+      expectMsgType[PagedStorage.WriteCompleted.type]
+      expectMsgType[PagedStorage.WriteCompleted.type]
       
       close(storage)
       new File(journalFilename).length should be > JournalHeader.size.toLong 
@@ -133,11 +133,11 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
     "create new pages into the next empty page" in new Fixture {
       val storage = open()
       storage ! PagedStorage.Write(PageIdx(0) -> content)
-      expectMsgType[PagedStorage.WriteCompleted]
+      expectMsgType[PagedStorage.WriteCompleted.type]
       storage ! PagedStorage.Create(content)
       storage ! PagedStorage.Create(content)
-      expectMsg(PagedStorage.CreateCompleted(PageIdx(1), None))
-      expectMsg(PagedStorage.CreateCompleted(PageIdx(2), None))
+      expectMsg(PagedStorage.CreateCompleted(PageIdx(1)))
+      expectMsg(PagedStorage.CreateCompleted(PageIdx(2)))
     }
     
     "refuse to open a data file with non-matching file size" in new Fixture {

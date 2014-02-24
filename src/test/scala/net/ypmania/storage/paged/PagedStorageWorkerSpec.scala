@@ -61,7 +61,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       hasread.content should be (content)
       
       journalFile.reply(FileActor.WriteCompleted)
-      val haswritten = expectMsgType[PagedStorage.WriteCompleted]
+      val haswritten = expectMsg(PagedStorage.WriteCompleted)
     }
     
     "return content after storing it in the journal" in new Fixture {
@@ -78,7 +78,7 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
                                                  0 :: 0 :: 0 :: 0 :: Nil)
       
       journalFile.reply(FileActor.WriteCompleted)
-      val haswritten = expectMsgType[PagedStorage.WriteCompleted]
+      val haswritten = expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.Read[ByteString](PageIdx(0))
       val read = journalFile.expectMsgType[FileActor.Read]

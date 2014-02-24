@@ -22,7 +22,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     val tree = system.actorOf(Props(new BTree(pagedStorage.ref, PageIdx(0))))
     
     val r = pagedStorage.expectMsgType[PagedStorage.Read[BTreePage]]
-    pagedStorage reply PagedStorage.ReadCompleted(BTreePage.empty, r.ctx)
+    pagedStorage reply PagedStorage.ReadCompleted(BTreePage.empty)
   }
   
   "A B+Tree" should {
@@ -39,7 +39,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       expectMsgType[BTree.PutCompleted]
       
       val written = pagedStorage.expectMsgType[PagedStorage.Write]
-      val content = written.pages(PageIdx(0))._2.asInstanceOf[BTreePage]
+      val content = written.pages(PageIdx(0)).content.asInstanceOf[BTreePage]
       content.get(id) should be (Some(page))
       
       tree ! BTree.Get(id)
@@ -51,7 +51,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
         tree ! BTree.Put(ID.forBranch, PageIdx(123))
         expectMsgType[BTree.PutCompleted]
         val written = pagedStorage.expectMsgType[PagedStorage.Write]
-        pagedStorage reply PagedStorage.WriteCompleted(written.ctx)
+        pagedStorage reply PagedStorage.WriteCompleted
       }
       tree ! BTree.Put(ID.forBranch, PageIdx(123))
       

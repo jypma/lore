@@ -29,7 +29,7 @@ class BTree(pagedStorage: ActorRef, initialRootPageIdx: PageIdx)
   }
   
   def splitting(rootPage: PageIdx, s: Split): Receive = {
-    case PagedStorage.CreateCompleted(newRootPageIdx, _) =>
+    case PagedStorage.CreateCompleted(newRootPageIdx) =>
       context become active (workerActorOf(newRootPageIdx), newRootPageIdx)
       unstashAll()
       
