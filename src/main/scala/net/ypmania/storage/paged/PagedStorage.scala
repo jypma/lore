@@ -199,16 +199,21 @@ object PagedStorage {
   }
   case class ReadCompleted[T] (content: T) 
  
-  case class WriteContent[T: PageType](content: T) {
+  case class WriteContent[T: PageType](content: T, author: ActorRef) {
     def toByteString = implicitly[PageType[T]].toByteString(content) 
   } 
   case class Write private (pages: Map[PageIdx, WriteContent[_]]) {
-    def +[T: PageType] (entry: (PageIdx, T)) =
-      copy (pages = pages + (entry._1 -> WriteContent(entry._2)))    
+    def +[T: PageType] (entry: (PageIdx, T))(implicit author: ActorRef) = {
+      for (current <- pages.get(entry._1)) {
+        if (current.author != author) throw new IllegalArgumentException(
+          s"${author} Trying to overwrite page ${entry._1}, originally written by ${current.author}")
+      }
+      copy (pages = pages + (entry._1 -> WriteContent(entry._2, author)))  
+    }
     lazy val pageBytes = pages.mapValues { _.toByteString }
   }
   object Write {
-    def apply[T: PageType](entry: (PageIdx, T)):Write = new Write(Map.empty) + entry
+    def apply[T: PageType](entry: (PageIdx, T))(implicit author: ActorRef) = new Write(Map.empty) + entry
   }
   case object WriteCompleted
 

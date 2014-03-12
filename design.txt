@@ -79,7 +79,8 @@ AtomicWrite (id=X1, pages = ..., otherWriters = [parent])
   if other latest write in progress from [sender]
     latestWrite.next = this
     this.prev = latestWrite
+  save as latest write from [sender]
   if collected all other writes for (id, otherWriters)
-    if this write doesn't depend
+    if this write.prev == null
       finish this write
         finish next (rec.)
