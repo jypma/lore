@@ -85,6 +85,10 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       other.send(actor, Atomic(Message("1B"), atom = atom1))
       
       target.expectMsg(Message("1A","1B","2A","2B"))
+      target.reply("Hi")
+      
+      expectMsg("Hi")
+      other.expectMsg("Hi")      
     }
     
   }
