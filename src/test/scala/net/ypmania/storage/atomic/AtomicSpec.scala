@@ -91,5 +91,11 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       other.expectMsg("Hi")      
     }
     
+    "forward non-atomic messages and their replies unchanged" in new Fixture {
+      actor ! "Hello"
+      target expectMsg "Hello"
+      target reply "World"
+      expectMsg("World")
+    }
   }
 }

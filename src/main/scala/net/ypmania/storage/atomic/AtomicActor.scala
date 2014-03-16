@@ -39,6 +39,10 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
       
     case Reply(clients, msg) =>
       for (client <- clients) client ! msg
+      
+    case other =>
+      import context.dispatcher
+      target ? other pipeTo sender
   }
   
   def finishableDependenciesFrom (top: Atom): Set[Atom] = finishableDependenciesFrom (Set(top), top)

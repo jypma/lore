@@ -20,6 +20,7 @@ import net.ypmania.io.IO
 import net.ypmania.io.IO.SizeOf
 import akka.util.Timeout
 import scala.concurrent.duration._
+import net.ypmania.storage.atomic.AtomicActor
 
 class PagedStorage(filename: String) extends Actor with Stash with ActorLogging {
   import PagedStorage._
@@ -203,14 +204,20 @@ object PagedStorage {
     def toByteString = implicitly[PageType[T]].toByteString(content) 
   } 
   case class Write private (pages: Map[PageIdx, WriteContent[_]]) {
-    def +[T: PageType] (entry: (PageIdx, T))(implicit author: ActorRef) = {
-      for (current <- pages.get(entry._1)) {
-        if (current.author != author) throw new IllegalArgumentException(
-          s"${author} Trying to overwrite page ${entry._1}, originally written by ${current.author}")
+    def +[T: PageType] (entry: (PageIdx, T))(implicit author: ActorRef) = 
+      plus (entry._1, WriteContent(entry._2, author))
+    
+    private[PagedStorage] def plus(p: PageIdx, c:WriteContent[_]) = {
+      for (current <- pages.get(p)) {
+        if (current.author != c.author) throw new IllegalArgumentException(
+          s"${c.author} Trying to overwrite page ${p}, originally written by ${current.author}")
       }
-      copy (pages = pages + (entry._1 -> WriteContent(entry._2, author)))  
+      copy (pages = pages + (p -> c))        
     }
     lazy val pageBytes = pages.mapValues { _.toByteString }
+  }
+  implicit val MergeableWrite = new AtomicActor.Mergeable[Write] {
+    def merge(a: Write, b: Write) = (a /: b.pages) { case (write, (p, c)) => write plus (p, c) }
   }
   object Write {
     def apply[T: PageType](entry: (PageIdx, T))(implicit author: ActorRef) = new Write(Map.empty) + entry
