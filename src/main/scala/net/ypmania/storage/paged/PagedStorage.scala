@@ -103,9 +103,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     
     context.become {
       case read:Read[_] =>
-        log.debug(s"processing read for ${sender}")
-        if (read.page >= pageCount) 
-          throw new Exception (s"Trying to read page ${read.page} but only have ${pageCount}")
+        log.debug(s"processing read(${read.page}) for ${sender}")
         writing.get(read.page).map { entry =>
           log.debug(s"Replying in-transit write content to ${sender}")
           val contentBeingWritten = entry.write.pages(read.page)
@@ -116,10 +114,15 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
             val client = sender
             readFrom(journalFile, pos, journalHeader.pageSize)(read.haveRead(_, client))
           }.getOrElse {
-            val pos = dataHeader.offsetForPage(read.page)
-            val client = sender
-            log.debug(s"Reading page ${read.page} from data at pos ${pos} for ${sender}")
-            readFrom(dataFile, pos, dataHeader.pageSize)(read.haveRead(_, client))
+            if (read.page >= pageCount) {
+              log.debug(s"Trying to read page ${read.page} but only have ${pageCount}. Returning empty.")
+              sender ! ReadCompleted(read.emptyResult)
+            } else {
+              val pos = dataHeader.offsetForPage(read.page)
+              val client = sender
+              log.debug(s"Reading page ${read.page} from data at pos ${pos} for ${sender}")
+              readFrom(dataFile, pos, dataHeader.pageSize)(read.haveRead(_, client))
+            }
           }  
         }
         
@@ -141,9 +144,10 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         
       case QueueEntryWritten(entry:WriteQueueEntry) =>
         entry.sender ! WriteCompleted
+        log.debug(s"Done writing ${entry.write.pages.keys}")
         entry.write.pages.keys.foreach(writing.remove)
         if (!writing.isEmpty) {
-          log.warning("Writing log was not empty after completing a write. Concurrency bug.")
+          log.warning(s"Writing log was not empty (${writing.keys} still present) after completing a write. Concurrency bug.")
         }
         emptyWriteQueue()
         
@@ -156,12 +160,11 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         //log.debug("Journal synced, poisining ourselves")
         self ! PoisonPill
         
-      case create: Create[_] =>
-        import create.pageType
+      case ReservePage =>
         //TODO also update freelist with this page
         val page = pageCount
-        self ? Write(page -> create.content) map (_ => CreateCompleted(page)) pipeTo sender
         pageCount += 1
+        sender ! PageReserved(page)
       }
   }
 }
@@ -173,30 +176,12 @@ object PagedStorage {
     
     def fromByteString(page: ByteString): T
     def toByteString(page: T): ByteString
+    def empty: T
   }
-  
-  private case class HaveReadPage[T : PageType](bytes: ByteString, sender: ActorRef) {
-    def value = implicitly[PageType[T]].fromByteString(bytes)
-  }
-  private case class WriteQueueEntry (sender: ActorRef, write: Write) {
-    private var inProgress = write.pages.size
-    def done = { inProgress <= 0 }
-    def finishPage(page: PageIdx) {
-      if (done) throw new Exception("Decremented more writes than we sent out...")
-      inProgress -= 1;  
-    }
-  }
-  
-  private case class QueueEntryWritten(entry: WriteQueueEntry)
-  private case class Creating (sender: ActorRef, response: CreateCompleted)
-  private case object SyncForShutdown
-    
-  private[paged] case class InitialState(
-      dataHeader: DataHeader, journalHeader: JournalHeader, 
-      journalIndex: Map[PageIdx, Long], pageCount: PageIdx, journalPos: Long)
   
   case class Read[T: PageType] (page: PageIdx) {
     private[PagedStorage] def haveRead(bytes: ByteString, sender: ActorRef) = HaveReadPage(bytes, sender)
+    private[PagedStorage] def emptyResult = implicitly[PageType[T]].empty
   }
   case class ReadCompleted[T] (content: T) 
  
@@ -224,8 +209,27 @@ object PagedStorage {
   }
   case object WriteCompleted
 
-  case class Create[T <: AnyRef](content: T)(implicit val pageType: PageType[T]) 
-  case class CreateCompleted(page: PageIdx)
+  case object ReservePage 
+  case class PageReserved(page: PageIdx)
   
   case object Shutdown
+  
+  private case class HaveReadPage[T : PageType](bytes: ByteString, sender: ActorRef) {
+    def value = implicitly[PageType[T]].fromByteString(bytes)
+  }
+  private case class WriteQueueEntry (sender: ActorRef, write: Write) {
+    private var inProgress = write.pages.size
+    def done = { inProgress <= 0 }
+    def finishPage(page: PageIdx) {
+      if (done) throw new Exception("Decremented more writes than we sent out...")
+      inProgress -= 1;  
+    }
+  }
+  
+  private case class QueueEntryWritten(entry: WriteQueueEntry)
+  private case object SyncForShutdown
+    
+  private[paged] case class InitialState(
+      dataHeader: DataHeader, journalHeader: JournalHeader, 
+      journalIndex: Map[PageIdx, Long], pageCount: PageIdx, journalPos: Long)
 }

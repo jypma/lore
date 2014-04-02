@@ -38,7 +38,8 @@ class StructuredStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSe
       builder.putInt(bytes.length)
       builder.putBytes(bytes)
       builder.result()
-    }    
+    }
+    def empty = ""
   }
   
   "structured storage" should {

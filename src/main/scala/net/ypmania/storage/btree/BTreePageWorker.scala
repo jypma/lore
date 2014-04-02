@@ -10,6 +10,7 @@ import akka.actor.Props
 import akka.actor.Stash
 import scala.collection.immutable.TreeMap
 import akka.dispatch.Envelope
+import net.ypmania.storage.atomic.AtomicActor._
 
 class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
                      (implicit val settings: BTree.Settings) 
@@ -37,8 +38,7 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
       if (page.full) {
         log.debug(s"Splitting because of ${msg}")
         val (updated, key, right) = page.split
-        pagedStorage ! PagedStorage.Write(pageIdx -> updated)
-        pagedStorage ! PagedStorage.Create(right)
+        pagedStorage ! PagedStorage.ReservePage
         context become splitting(updated, key, right)
         stash()
       } else if (page.internal) {
@@ -65,10 +65,10 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
         childForPage(childPageIdx) forward msg 
       }
       
-    case Split(splitKey, newPageIdx, msgs) =>
+    case Split(splitKey, newPageIdx, msgs, atom) =>
       require (!page.full)
       val updated = page + (splitKey -> newPageIdx)
-      pagedStorage ! PagedStorage.Write(pageIdx -> updated)
+      pagedStorage ! Atomic(PagedStorage.Write(pageIdx -> updated), atom = atom)
       val child = childForPage(newPageIdx)
       for (msg <- msgs) {
         child.tell(msg.message, msg.sender)
@@ -77,13 +77,19 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
       
   }
   
-  def splitting(page: BTreePage, splitKey: ID, right: BTreePage): Receive = {
+  def splitting(updated: BTreePage, splitKey: ID, right: BTreePage): Receive = {
     var stashForRight = Vector.empty[Envelope]
     
     {
-      case PagedStorage.CreateCompleted(rightPageIdx) =>
-        context.parent ! Split(splitKey, rightPageIdx, stashForRight)
-        context become active(page)
+      case PagedStorage.PageReserved(rightPageIdx) =>
+        log.debug(s"Completing split, new node at page ${rightPageIdx}, informing parent ${context.parent}")
+        val atom = Atom()
+        pagedStorage ! Atomic(
+            PagedStorage.Write(pageIdx -> updated) + (rightPageIdx -> right),
+            otherSenders = Set(context.parent),
+            atom = atom)
+        context.parent ! Split(splitKey, rightPageIdx, stashForRight, atom)
+        context become active(updated)
         unstashAll()
       case msg:Keyed if msg.key >= splitKey =>
         stashForRight :+= Envelope(msg, sender, context.system)

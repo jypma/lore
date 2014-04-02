@@ -55,11 +55,13 @@ class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: Act
   }
   
   def createJournal(dataHeader: DataHeader, pageCount: PageIdx): Unit = {
+    log.debug(s"Creating journal with ${pageCount} pages")
     val journalHeader = JournalHeader(dataHeader)
     journalFile ! FileActor.Write(0, journalHeader.toByteString)
     journalFile ! FileActor.Sync
     
     client ! PagedStorage.InitialState(dataHeader, journalHeader, Map.empty, pageCount, JournalHeader.size)
+    context become done
   }
   
   private def readFrom(file: ActorRef, pos: Long, size: Int)(conv: ByteString => AnyRef) {
@@ -150,5 +152,10 @@ class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: Act
         journalPos += SizeOf.MD5
         readNextJournalEntrySize()
     }
+  }
+  
+  def done: Receive = {
+    case msg =>
+      log.debug(s"Receiving ${msg} but we are already done")
   }
 }

@@ -4,6 +4,7 @@ import akka.util.ByteString
 import java.security.MessageDigest
 import akka.util.ByteStringBuilder
 import net.ypmania.io.IO._
+import scala.collection.immutable.TreeMap
 
 case class JournalEntry private (
     header: JournalHeader,
@@ -21,6 +22,8 @@ case class JournalEntry private (
     bs ++= md5
     bs.result
   }
+  
+  def padded = copy(pages = pages.mapValues(_.zeroPad(header.pageSize)))
 }
 
 object JournalEntry {
@@ -33,13 +36,15 @@ object JournalEntry {
     var pos = SizeOf.Int + (pageCount * SizeOf.PageIdx)
     for (pageIdx <- pageIdxs) {
       pages += (pageIdx -> bytes.slice(pos, pos + header.pageSize))
+      pos = pos + header.pageSize
+      i.drop(header.pageSize)
     }
     val readMd5 = new Array[Byte](SizeOf.MD5)
     i.getBytes(readMd5)
     val pageMap = pages.result()
     val expectedMd5 = md5(header, pageMap)
     if (expectedMd5 != ByteString(readMd5))
-      throw new Exception ("Wrong MD5 in journal entry") // TODO ignore journal from here
+      throw new Exception (s"Wrong MD5 in journal entry: expected ${expectedMd5}, got ${ByteString(readMd5)}") // TODO ignore journal from here
     
     new JournalEntry(header, pageMap, expectedMd5)
   }
@@ -50,12 +55,11 @@ object JournalEntry {
   
   private def md5(header: JournalHeader, pages: Map[PageIdx, ByteString]) = {
     val md = MessageDigest.getInstance("MD5")
-    for (pageIdx ← pages.keys) {
+    for ((pageIdx, content) ← TreeMap.empty[PageIdx,ByteString] ++ pages) {
       val b = new ByteStringBuilder()
       pageIdx.put(b)
       md.update(b.result.asByteBuffer)
-    }
-    for (content ← pages.values) {
+      
       md.update(content.zeroPad(header.pageSize).asByteBuffer)
     }
     ByteString(md.digest())

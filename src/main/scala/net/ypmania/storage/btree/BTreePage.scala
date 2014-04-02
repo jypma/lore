@@ -92,6 +92,8 @@ object BTreePage {
         pagePtr.put(bs)
       }
       bs.result
-    }    
+    }
+    
+    def empty = BTreePage.empty
   }
 }

@@ -28,6 +28,8 @@ object MetadataPage {
       page.commands.put(bs)
       bs.result
     }
+    
+    def empty = MetadataPage.emptyDb
   }
   
 }

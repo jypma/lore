@@ -28,6 +28,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
   implicit val byteStringPageType = new PageType[ByteString] {
     def fromByteString(page: ByteString) = page
     def toByteString(page: ByteString) = page
+    def empty = ByteString()
   }
   
   class Fixture(n:String = "") {
@@ -130,14 +131,14 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
       expectMsgType[Failure[_]]
     }
     
-    "create new pages into the next empty page" in new Fixture {
+    "reserve new pages into the next empty page" in new Fixture {
       val storage = open()
       storage ! PagedStorage.Write(PageIdx(0) -> content)
       expectMsgType[PagedStorage.WriteCompleted.type]
-      storage ! PagedStorage.Create(content)
-      storage ! PagedStorage.Create(content)
-      expectMsg(PagedStorage.CreateCompleted(PageIdx(1)))
-      expectMsg(PagedStorage.CreateCompleted(PageIdx(2)))
+      storage ! PagedStorage.ReservePage
+      storage ! PagedStorage.ReservePage
+      expectMsg(PagedStorage.PageReserved(PageIdx(1)))
+      expectMsg(PagedStorage.PageReserved(PageIdx(2)))
     }
     
     "refuse to open a data file with non-matching file size" in new Fixture {

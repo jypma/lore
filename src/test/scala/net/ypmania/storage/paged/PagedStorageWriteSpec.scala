@@ -14,7 +14,8 @@ class PagedStorageWriteSpec extends WordSpec with Matchers {
   trait Fixture {    
     implicit val byteStringPageType = new PageType[ByteString] {
       def fromByteString(page: ByteString) = page
-          def toByteString(page: ByteString) = page
+      def toByteString(page: ByteString) = page
+      def empty = ByteString()
     }
     
     val system = ActorSystem("Test")

@@ -16,11 +16,14 @@ import akka.testkit.TestKit
 import akka.testkit.TestProbe
 import akka.util.ByteString
 
+import concurrent.duration._
+
 class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
   implicit val byteStringPageType = new PagedStorage.PageType[ByteString] {
     def fromByteString(page: ByteString) = page
     def toByteString(page: ByteString) = page
+    def empty = ByteString()
   }
   
   class Fixture(val initialPages:Int = 0, 
@@ -44,13 +47,10 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
   }
   
   "a paged file" should {
-    "not accept reads outside of the file" in new Fixture {       
-      pending // rewrite with normal actor ref
-      /*
-      intercept[Exception] {
-        f.receive(PagedStorage.Read(PageIdx(0)))        
-      }
-      */
+    "return empty results if reading outside of the file" in new Fixture {       
+      f ! PagedStorage.Read(PageIdx(0))
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
+      hasread.content should be (ByteString())
     }
     
     "return written content while still writing it" in new Fixture {
@@ -129,6 +129,29 @@ class PagedStorageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       write.bytes.slice (0, 12).toList should be (2 :: 0 :: 0 :: 0 :: 
                                                   0 :: 0 :: 0 :: 0 :: 
                                                   1 :: 0 :: 0 :: 0 :: Nil)
+    }
+    
+    "combine queued-up writes to the same page, but send a reply for all" in new Fixture {
+      val content2 = ByteString("Hello, again!")
+      
+      f ! (PagedStorage.Write(PageIdx(0) -> content))
+      f ! (PagedStorage.Write(PageIdx(1) -> content))
+      f ! (PagedStorage.Write(PageIdx(1) -> content2))
+      
+      val write1 = journalFile.expectMsgType[FileActor.Write]
+      val sender1 = journalFile.sender
+      journalFile.expectNoMsg(100.milliseconds)
+      journalFile.send(sender1, FileActor.WriteCompleted)
+      
+      val write2 = journalFile.expectMsgType[FileActor.Write]
+      val entry = JournalEntry(journalHeader, write2.bytes)
+      entry.pages(PageIdx(1)).take(content2.length) should be (content2)
+      
+      journalFile.reply(FileActor.WriteCompleted)
+
+      expectMsg(PagedStorage.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
     }
     
     "return the latest version of a page that has been overwritten" in new Fixture {

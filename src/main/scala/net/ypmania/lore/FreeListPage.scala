@@ -28,5 +28,7 @@ object FreeListPage {
       bs.putInts(page.pages)
       bs.result
     }
+    
+    def empty = FreeListPage.empty
   }
 }
