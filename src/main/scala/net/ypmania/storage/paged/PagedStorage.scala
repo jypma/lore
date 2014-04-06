@@ -67,23 +67,24 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     var journalIndex = collection.mutable.Map.empty[PageIdx,Long] ++ initial.journalIndex
     var journalPos = initial.journalPos
     var pageCount = initial.pageCount
-    var writeQueue = Vector.empty[WriteQueueEntry]
-    var writing = collection.mutable.Map.empty[PageIdx, WriteQueueEntry]
+    var nextWrite:Option[Write] = None
+    var nextWriteSenders = Seq.empty[ActorRef]
+    var writing = Map.empty[PageIdx, Any]
   
-    def performWrite(q: WriteQueueEntry) {
-      val journalEntry = JournalEntry(journalHeader, q.write.pageBytes)
+    def performWrite(write: Write, senders: Seq[ActorRef]) {
+      val journalEntry = JournalEntry(journalHeader, write.pageBytes)
       val content = journalEntry.toByteString
       journalFile ? FileActor.Write(journalPos, content) map {
-        case FileActor.WriteCompleted => QueueEntryWritten(q)
+        case FileActor.WriteCompleted => QueueEntryWritten(senders)
       } pipeTo self
       
       journalPos += SizeOf.MD5
       journalPos += SizeOf.Int // number of pages
-      for (page <- q.write.pages.keys) {
+      for (page <- write.pages.keys) {
         if (page >= pageCount) {
           pageCount = page + 1
         }
-        writing(page) = q
+        writing += page -> write.pages(page).content
         
         journalPos += SizeOf.PageIdx
         log.debug(s"Stored page ${page} at ${journalPos}")
@@ -93,8 +94,17 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     }
     
     def emptyWriteQueue() {
-      writeQueue.foreach(performWrite)
+      for (write <- nextWrite) {
+        performWrite(write, nextWriteSenders)
+      }
+      nextWrite = None
+      nextWriteSenders = Seq.empty
+      /*
+      if (!writeQueue.isEmpty) {
+        performWrite(writeQueue.map(_.write).reduce(MergeableWrite.merge), writeQueue.map(_.sender))        
+      }
       writeQueue = Vector.empty
+      */
     }
     
     def sync() {
@@ -104,10 +114,9 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     context.become {
       case read:Read[_] =>
         log.debug(s"processing read(${read.page}) for ${sender}")
-        writing.get(read.page).map { entry =>
+        writing.get(read.page).map { content =>
           log.debug(s"Replying in-transit write content to ${sender}")
-          val contentBeingWritten = entry.write.pages(read.page)
-          sender ! ReadCompleted(contentBeingWritten.content)
+          sender ! ReadCompleted(content)
         }.getOrElse {
           journalIndex.get(read.page).map { pos =>
             log.debug(s"Found page ${read.page} in journal at pos ${pos}")
@@ -135,20 +144,17 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
           if (content.length > journalHeader.pageSize) 
       	  throw new Exception(s"Content length ${content.length} for page ${page} overflows page size ${journalHeader.pageSize}")
         }
-        val q = WriteQueueEntry(sender, write)
+
         if (writing.isEmpty) {
-          performWrite(q)
+          performWrite(write, Seq(sender))
         } else {
-          writeQueue :+= q
+          nextWrite = nextWrite.map(w => MergeableWrite.merge(w, write)).orElse(Some(write))
+          nextWriteSenders :+= sender
         }
         
-      case QueueEntryWritten(entry:WriteQueueEntry) =>
-        entry.sender ! WriteCompleted
-        log.debug(s"Done writing ${entry.write.pages.keys}")
-        entry.write.pages.keys.foreach(writing.remove)
-        if (!writing.isEmpty) {
-          log.warning(s"Writing log was not empty (${writing.keys} still present) after completing a write. Concurrency bug.")
-        }
+      case QueueEntryWritten(senders) =>
+        senders foreach { _ ! WriteCompleted }
+        writing = Map.empty
         emptyWriteQueue()
         
       case Shutdown =>
@@ -202,7 +208,7 @@ object PagedStorage {
     lazy val pageBytes = pages.mapValues { _.toByteString }
   }
   implicit val MergeableWrite = new AtomicActor.Mergeable[Write] {
-    def merge(a: Write, b: Write) = (a /: b.pages) { case (write, (p, c)) => write plus (p, c) }
+    def merge(a: Write, b: Write): Write = (a /: b.pages) { case (write, (p, c)) => write plus (p, c) }
   }
   object Write {
     def apply[T: PageType](entry: (PageIdx, T))(implicit author: ActorRef) = new Write(Map.empty) + entry
@@ -217,16 +223,9 @@ object PagedStorage {
   private case class HaveReadPage[T : PageType](bytes: ByteString, sender: ActorRef) {
     def value = implicitly[PageType[T]].fromByteString(bytes)
   }
-  private case class WriteQueueEntry (sender: ActorRef, write: Write) {
-    private var inProgress = write.pages.size
-    def done = { inProgress <= 0 }
-    def finishPage(page: PageIdx) {
-      if (done) throw new Exception("Decremented more writes than we sent out...")
-      inProgress -= 1;  
-    }
-  }
+  private case class WriteQueueEntry (sender: ActorRef, write: Write) 
   
-  private case class QueueEntryWritten(entry: WriteQueueEntry)
+  private case class QueueEntryWritten(senders: Seq[ActorRef])
   private case object SyncForShutdown
     
   private[paged] case class InitialState(
