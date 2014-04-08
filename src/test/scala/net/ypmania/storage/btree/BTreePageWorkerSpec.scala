@@ -61,34 +61,29 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       }
       tree ! BTree.Put(ID(0,4), PageIdx(123))
       
-      pagedStorage.expectMsg(PagedStorage.ReservePage)
+      pagedStorage.expectMsg(PagedStorage.ReservePage) // worker reserving a new page for the new split-off node
       pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))
 
+      val NewRootPage = PageIdx(2)
       val writes = pagedStorage.receiveWhile() { 
-        case write @ AtomicActor.Atomic(PagedStorage.Write(_), _, _) => Some(write)
-        case PagedStorage.ReservePage => None // root reserving page
-        case PagedStorage.Write(pages) if pages.contains(PageIdx(0)) => None // adding node "4"
-        case other => println(other); None
-      }
+        case write @ AtomicActor.Atomic(PagedStorage.Write(_), _, _) =>   // old root splitting in atomic write 
+          Some(write.asInstanceOf[AtomicActor.Atomic[PagedStorage.Write]]) 
+        case PagedStorage.ReservePage =>                                  // root reserving page 
+          pagedStorage.reply(PagedStorage.PageReserved(NewRootPage)); 
+          None 
+        //case r@PagedStorage.Read(NewRootPage) =>                          // new root reading itself  
+        //  pagedStorage.reply(r.emptyResult); None 
+        case PagedStorage.Write(pages) if pages.contains(PageIdx(0)) =>   // finally adding node "4" 
+          None 
+      }.filter(_.isDefined).map(_.get)
       
-      writes.filter(_.isDefined).map(_.get) should have size(2)
+      writes should have size(2)
       
-      /*
-      // write 1 should contain new left and write node, which was the old root
-      val write1 = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
-      write1.msg.pages should contain key(PageIdx(0))
-      write1.msg.pages should contain key(PageIdx(1))
-      
-      // now, the root has gotten the split message and creates a new root
-      pagedStorage.expectMsg(PagedStorage.ReservePage)
-      pagedStorage.reply(PagedStorage.PageReserved(PageIdx(2)))
-      
-      val msgs = pagedStorage.receiveN(2)
-      println(msgs)
-      
-      //newRootWrite.msg.pages should contain key(PageIdx(2))      
-      //newRootWrite.atom should be (write1.atom)
-      */
+      writes(0).atom should be (writes(1).atom)
+      val combinedWrite = writes(0).msg ++ writes(1).msg
+      combinedWrite.pages should contain key(PageIdx(0))
+      combinedWrite.pages should contain key(PageIdx(1))
+      combinedWrite.pages should contain key(PageIdx(2))
     }
   }
 }

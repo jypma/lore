@@ -186,8 +186,8 @@ object PagedStorage {
   }
   
   case class Read[T: PageType] (page: PageIdx) {
-    private[PagedStorage] def haveRead(bytes: ByteString, sender: ActorRef) = HaveReadPage(bytes, sender)
-    private[PagedStorage] def emptyResult = implicitly[PageType[T]].empty
+    def haveRead(bytes: ByteString, sender: ActorRef) = HaveReadPage(bytes, sender)
+    def emptyResult = implicitly[PageType[T]].empty
   }
   case class ReadCompleted[T] (content: T) 
  
@@ -198,6 +198,8 @@ object PagedStorage {
     def +[T: PageType] (entry: (PageIdx, T))(implicit author: ActorRef) = 
       plus (entry._1, WriteContent(entry._2, author))
     
+    def ++(b: Write) = (this /: b.pages) { case (write, (p, c)) => write plus (p, c) }
+      
     private[PagedStorage] def plus(p: PageIdx, c:WriteContent[_]) = {
       for (current <- pages.get(p)) {
         if (current.author != c.author) throw new IllegalArgumentException(
@@ -208,7 +210,7 @@ object PagedStorage {
     lazy val pageBytes = pages.mapValues { _.toByteString }
   }
   implicit val MergeableWrite = new AtomicActor.Mergeable[Write] {
-    def merge(a: Write, b: Write): Write = (a /: b.pages) { case (write, (p, c)) => write plus (p, c) }
+    def merge(a: Write, b: Write): Write = a ++ b
   }
   object Write {
     def apply[T: PageType](entry: (PageIdx, T))(implicit author: ActorRef) = new Write(Map.empty) + entry
@@ -220,7 +222,7 @@ object PagedStorage {
   
   case object Shutdown
   
-  private case class HaveReadPage[T : PageType](bytes: ByteString, sender: ActorRef) {
+  case class HaveReadPage[T : PageType](bytes: ByteString, sender: ActorRef) {
     def value = implicitly[PageType[T]].fromByteString(bytes)
   }
   private case class WriteQueueEntry (sender: ActorRef, write: Write) 
