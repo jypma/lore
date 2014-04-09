@@ -2,8 +2,8 @@ header
   pagesize
   firstfree: freelist page (in memory)
   branchesIdx: btree node page (branch)
-  lastBranches: last branches storage page
-  commandsIdx: btree ID -> commands
+  branches: last branches storage page (new branches appended here, and into branchesIdx)
+  events: last event storage page (new events appended here, and into their branch's index)
 
 freelist page
   next: freelist page
@@ -27,29 +27,34 @@ branches
     id: ID
     parentbranch: ID
     parentcommand: ID
-    commands: btree node page (commands)
-    sub_idx: btree subID -> preID -> commandlist
+    events: btree node page (events)  OR  eventList (where key1,key2 is unused)
+    
+    // IF enough events to warrant index:
+    sub_idx: btree subID -> preID -> eventList (where key1 = subID, key2 = preID) 
     pre_idx: // later
     obj_idx: // later
     
   ] *
   
-commandlist
+eventList
   [
     branch: ID
     key1: ID (e.g. sub)
     key2: ID (e.g. pre)
-    commands: [
+    events: [
       id: ID
-      [ mergedId: ID (command) ]+ // the command that merged in this command into the branch
+      
+      // Let's leave this out for now. Find out why this should be here.
+      // the future event that merged in this event into the branch
+      [ mergedId: ID (event) ]+ 
     ] *
-    prev: commandlist // rest of earlier commands in case of page overflow
+    prev: eventList // rest of earlier events in case of page overflow
   ] *
 
-btree node page (commands)
+btree node page (events)
   (key is ID)
   type: internal / leaf
-  first: pagenumber (internal -> btree node page (commands), leaf -> commands)
+  first: pagenumber (internal -> btree node page (events), leaf -> events)
   [
     key: ID
     next: pagenumber 
@@ -57,7 +62,7 @@ btree node page (commands)
   
 Value: size <= (pagesize / 128): inline. Otherwise: (pagenumber: values, idx).
   
-commands
+events
   [
     id: ID
     add: [ sub, pre, obj: ID ] *
@@ -71,16 +76,3 @@ values
     part: bytes
     next: (pagenumber: values, idx)
   ] *
-  
-  
--------
-
-AtomicWrite (id=X1, pages = ..., otherWriters = [parent])
-  if other latest write in progress from [sender]
-    latestWrite.next = this
-    this.prev = latestWrite
-  save as latest write from [sender]
-  if collected all other writes for (id, otherWriters)
-    if this write.prev == null
-      finish this write
-        finish next (rec.)
