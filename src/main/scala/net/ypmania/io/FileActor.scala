@@ -102,7 +102,7 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
     case Sync =>
       if (writers > 0) {
         stash()
-      } else try {
+      } else {
         // Should this be in a Future { } block since it's blocking?
         channel.force(true)
         log.debug("Synced")

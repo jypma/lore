@@ -20,22 +20,17 @@ case class ID (l1: Long, l2: Long) extends Ordered[ID] {
         d1)
   }
   
-  def putInto(bs: ByteStringBuilder)(implicit order: ByteOrder) {
-    bs.putLong(l1)
-    bs.putLong(l2)
-  }
+  def idType = l2 & 0xFFFF
+  def isValueProperty = idType == 4
+  def isTextProperty = idType == 5
 }
 
 object ID {
   def forBranch = forType(1)
   def forChange = forType(2)
   def forMerge = forType(3)
-  
-  def getFrom(i:ByteIterator)(implicit order: ByteOrder) = {
-    val l1 = i.getLong
-    val l2 = i.getLong
-    new ID(l1, l2)
-  }
+  def forValueProperty = forType(4)
+  def forTextProperty = forType(5)
   
   private def forType(t:Int) = ID(time, node | t) 
   

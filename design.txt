@@ -27,22 +27,23 @@ branches
     id: ID
     parentbranch: ID
     parentcommand: ID
-    events: btree node page (events)  OR  eventList (where key1,key2 is unused)
+    events: btree node page (events)  OR  eventLists (where key1,key2 is unused)
     
     // IF enough events to warrant index:
-    sub_idx: btree subID -> preID -> eventList (where key1 = subID, key2 = preID) 
+    sub_idx: btree subID -> preID -> eventLists (where key1 = subID, key2 = preID) 
     pre_idx: // later
     obj_idx: // later
     
   ] *
   
-eventList
+eventLists
   [
     branch: ID
     key1: ID (e.g. sub)
     key2: ID (e.g. pre)
     events: [
       id: ID
+      page: pageidx(events)
       
       // Let's leave this out for now. Find out why this should be here.
       // the future event that merged in this event into the branch
@@ -67,7 +68,8 @@ events
     id: ID
     add: [ sub, pre, obj: ID ] *
     del: [ sub, pre, obj: ID ] *
-    set: [ sub, pro: ID, value: Value ] *
+    num: [ sub, pro: ID, value: Value ] *
+    txt: [ sub, pro: ID, value: Value ] *
     clr: [ sub, pro: ID ] *
   ] *
   
@@ -76,3 +78,61 @@ values
     part: bytes
     next: (pagenumber: values, idx)
   ] *
+
+
+
+valueC = valueA * valueB -> valueC will not be set if either valueA or valueB is not defined or not a number. 
+
+[units]
+
+m          meter       1
+
+cm         ==          [F1]
+[F1]       operator    *
+[F1]       op1         m
+[F1]       op2         100
+mybox      length      [A]
+[A]        m           5
+myshoe     length      [B]
+[B]        cm          30
+--------------------------
+[B]        m           30 / 100 = 0.03
+
+--------------------------
+mybox      height      [C]
+[C]        m           3
+area       ==          [F2]
+[F2]       operator    *
+[F2]       op1         [F3]
+[F3]       operator    m
+[F3]       subj        [F4]
+[F4]       operator    length    // no subj, so this becomes root of the function chain
+[F2]       op2         [F5]
+[F5]       operator    m
+[F5]       subj        [F6]
+[F6]       operator    height
+---------------------------
+mybox      area        length.m * height.m = 5 * 3 = 15 
+
+for all `prop` where `prop` == _.`a_unit` * _.`b_unit`;
+                     `a`.
+
+x.siphysicalvalue ==
+  thereis "unit" where x.unit=numericvalue and unit.meter=integer and unit.== is undefined OR
+  thereis "unit" where x.unit=numericvalue and unit.second=integer and unit.== is undefined OR
+  ...etc...
+
+a * b (a.siphysicalvalue, b.siphysicalvalue, commutative) == {
+  {
+    in collection siroot.siunits
+    meter: (a.siphysicalvalue[unit]).meter * (b.siphysicalvalue[unit]).meter
+    second: (a.siphysicalvalue[unit]).second * (b.siphysicalvalue[unit]).second
+  }: a.siphysicalvalue[unit] * b.siphysicalvalue[unit]
+}
+
+
+[values]
+- global table of units
+- unit: [id, f, m, kg, s, A, K, mol, cd]
+- numeric value must have a unit
+- textual value  

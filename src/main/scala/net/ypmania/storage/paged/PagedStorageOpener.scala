@@ -143,7 +143,7 @@ class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: Act
         log.debug(s"Parsing journal entry with ${entryPageCount} pages")
         val iterator = bytes.iterator
         for (i <- 0 until entryPageCount) {
-          val pageIdx = PageIdx.get(iterator)
+          val pageIdx = iterator.getPageIdx
           havePage(pageIdx)
           log.debug(s"Page ${pageIdx} is at position ${journalPos}")
           journalIndex += (pageIdx -> journalPos)

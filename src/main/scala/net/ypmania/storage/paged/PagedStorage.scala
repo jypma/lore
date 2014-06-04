@@ -178,8 +178,6 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
 
 object PagedStorage {
   trait PageType[T] {
-    protected implicit val byteOrder = IO.byteOrder
-    
     def fromByteString(page: ByteString): T
     def toByteString(page: T): ByteString
     def empty: T

@@ -14,6 +14,9 @@ import net.ypmania.storage.atomic.AtomicActor._
 import akka.actor.PoisonPill
 import akka.actor.Terminated
 
+/**
+ * @param pagedStorage A PagedStorage actor wrapped in AtomicActor
+ */
 class BTree(pagedStorage: ActorRef, initialRootPageIdx: PageIdx)
            (implicit val settings: BTree.Settings)
            extends Actor with Stash with ActorLogging {

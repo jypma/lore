@@ -3,6 +3,7 @@ package net.ypmania.lore
 import akka.util.ByteString
 import java.nio.ByteOrder
 import net.ypmania.storage.paged.PagedStorage
+import net.ypmania.io.IO._
 
 case class FreeListPage(nextFreeListPage: Int, pages: Array[Int]) {
 

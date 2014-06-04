@@ -14,7 +14,7 @@ case class JournalEntry private (
     val bs = new ByteStringBuilder
     bs.putInt(pages.size)
     for (pageIdx ← pages.keys) {
-      pageIdx.put(bs)
+      bs.putPageIdx(pageIdx)
     }
     for (content ← pages.values) {
       bs ++= content.zeroPad(header.pageSize)
@@ -30,7 +30,7 @@ object JournalEntry {
   def apply(header: JournalHeader, bytes: ByteString) = {
     val i = bytes.iterator
     val pageCount = i.getInt
-    val pageIdxs = for (p <- 0 until pageCount) yield PageIdx.get(i)
+    val pageIdxs = for (p <- 0 until pageCount) yield i.getPageIdx
     val pages = Map.newBuilder[PageIdx, ByteString]
     
     var pos = SizeOf.Int + (pageCount * SizeOf.PageIdx)
@@ -57,7 +57,7 @@ object JournalEntry {
     val md = MessageDigest.getInstance("MD5")
     for ((pageIdx, content) ← TreeMap.empty[PageIdx,ByteString] ++ pages) {
       val b = new ByteStringBuilder()
-      pageIdx.put(b)
+      b.putPageIdx(pageIdx)
       md.update(b.result.asByteBuffer)
       
       md.update(content.zeroPad(header.pageSize).asByteBuffer)

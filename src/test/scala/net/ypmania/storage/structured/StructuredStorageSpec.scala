@@ -13,6 +13,7 @@ import akka.util.ByteString
 import net.ypmania.storage.paged.PageIdx
 import net.ypmania.storage.paged.PagedStorage
 import scala.util.Random
+import net.ypmania.io.IO._
 
 class StructuredStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {

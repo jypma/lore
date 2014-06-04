@@ -7,6 +7,7 @@ import net.ypmania.lore.ID
 import net.ypmania.storage.paged.PageIdx
 import net.ypmania.lore.BinarySearch._
 import scala.collection.immutable.TreeMap
+import net.ypmania.io.IO._
 
 case class BTreePage(leaf: Boolean, pointers: TreeMap[ID, PageIdx], next: PageIdx) {
   import BTreePage._
@@ -67,16 +68,17 @@ object BTreePage {
   }
   
   implicit object Type extends PagedStorage.PageType[BTreePage] {
+    
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val t = i.getByte
       val leaf = (t == 0) 
-      val next = PageIdx.get(i)
+      val next = i.getPageIdx
       val n_pointers = i.getInt
       val pointers = TreeMap.newBuilder[ID,PageIdx]
       for (n <- 0 until n_pointers) {
-        val id = ID.getFrom(i)
-        val pagePtr = PageIdx.get(i)
+        val id = i.getID
+        val pagePtr = i.getPageIdx
         pointers += (id -> pagePtr)
       }
       BTreePage(leaf, pointers.result, next)
@@ -85,11 +87,11 @@ object BTreePage {
     def toByteString(page: BTreePage) = {
       val bs = ByteString.newBuilder
       bs.putByte(if (page.leaf) 0 else 1)
-      page.next.put(bs)
+      bs.putPageIdx(page.next)
       bs.putInt(page.pointers.size)
       for ((id, pagePtr) <- page.pointers) {
-        id.putInto(bs)
-        pagePtr.put(bs)
+        bs.putID(id)
+        bs.putPageIdx(pagePtr)
       }
       bs.result
     }

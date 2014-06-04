@@ -4,7 +4,6 @@ import org.scalatest.Matchers
 import org.scalatest.WordSpec
 import net.ypmania.storage.paged.PagedStorage.PageType
 import akka.util.ByteString
-import org.scalamock.scalatest.MockFactory
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
 import akka.testkit.TestProbe

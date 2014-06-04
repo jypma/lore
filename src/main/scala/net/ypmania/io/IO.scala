@@ -4,6 +4,9 @@ import akka.util.ByteString
 import net.ypmania.lore.ID
 import java.nio.ByteOrder
 import scala.annotation.tailrec
+import akka.util.ByteStringBuilder
+import akka.util.ByteIterator
+import net.ypmania.storage.paged.PageIdx
 
 object IO {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
@@ -35,8 +38,27 @@ object IO {
         else
           (bs ++ zeroes).zeroPad(needed - zeroes.length)  
       }
-     
     }
+  }
+  
+  implicit class ByteStringBuilderOps(val bs: ByteStringBuilder) {
+    def putID(id:ID) {
+      bs.putLong(id.l1)
+      bs.putLong(id.l2)      
+    }
+    
+    def putPageIdx(p:PageIdx) {
+      bs.putInt(p.toInt)
+    }
+  }
+  
+  implicit class ByteIteratorOps(val i: ByteIterator) {
+    def getID: ID = {
+      val l1 = i.getLong
+      val l2 = i.getLong
+      new ID(l1, l2)   
+    }
+    def getPageIdx = PageIdx(i.getInt)
   }
   
   private def toInt(b:ByteString) = b.asByteBuffer.getInt
