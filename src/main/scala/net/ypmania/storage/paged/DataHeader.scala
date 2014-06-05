@@ -4,15 +4,16 @@ import DataHeader._
 import akka.util.ByteStringBuilder
 import net.ypmania.io.IO._
 import akka.util.ByteIterator
+import akka.util.ByteString
 
 case class DataHeader(
-  magic: Array[Byte] = defaultMagic,
+  magic: ByteString = defaultMagic,
   pageSize: Int = defaultPageSize) {
   
   def valid = magic.sameElements(defaultMagic)
   def toByteString = {
     val bs = new ByteStringBuilder
-    bs.putBytes(magic)
+    bs ++= magic
     bs.putInt(pageSize)
     bs.result
   }
@@ -22,12 +23,12 @@ case class DataHeader(
 
 object DataHeader {
   private val defaultPageSize = 64 * 1024
-  private val defaultMagic = "lore-db4".getBytes("UTF-8")
+  private val defaultMagic = ByteString("lore-db4")
   val size = defaultMagic.length + SizeOf.Int
   def apply(i: ByteIterator) = {
     val magic = new Array[Byte](defaultMagic.length)
     i.getBytes(magic)
-    new DataHeader(magic, i.getInt)
+    new DataHeader(ByteString(magic), i.getInt)
   }
 }
   

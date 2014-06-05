@@ -1,156 +1,207 @@
 package net.ypmania.storage.paged
 
-import java.io.File
-import java.io.FileOutputStream
-import scala.concurrent.duration._
-import scala.util.Failure
-import scala.util.Random
-import scala.util.Success
-import scala.util.Try
 import org.scalatest.Matchers
+
 import org.scalatest.WordSpecLike
 import org.scalatest.concurrent.Eventually
-import akka.actor.Actor
-import akka.actor.ActorRef
-import akka.actor.ActorSystem
-import akka.actor.OneForOneStrategy
-import akka.actor.Props
-import akka.actor.SupervisorStrategy
-import akka.testkit.ImplicitSender
-import akka.testkit.TestKit
-import akka.util.ByteString
-import akka.actor.ActorLogging
-import net.ypmania.storage.paged.PagedStorage.PageType
 
-class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender with WordSpecLike with Matchers with Eventually {
-  var openIdx = 0
-  
-  implicit val byteStringPageType = new PageType[ByteString] {
+import net.ypmania.io.FileActor
+import net.ypmania.io.IO._
+
+import akka.actor.ActorSystem
+import akka.actor.Props
+import akka.testkit.ImplicitSender
+import akka.testkit.TestActorRef
+import akka.testkit.TestKit
+import akka.testkit.TestProbe
+import akka.util.ByteString
+
+import concurrent.duration._
+
+class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
+                       with WordSpecLike with Matchers with Eventually {
+  implicit val byteStringPageType = new PagedStorage.PageType[ByteString] {
     def fromByteString(page: ByteString) = page
     def toByteString(page: ByteString) = page
     def empty = ByteString()
   }
   
-  class Fixture(n:String = "") {
-    val r = Random.nextInt
-    val filename = "/tmp/PagedFileSpec" + r 
-    val journalFilename = filename + ".j"
+  class Fixture(val initialPages:Int = 0, 
+                val initialJournalIndex:Map[PageIdx, Long] = Map.empty)  {
+    val dataFile = TestProbe()
+    val journalFile = TestProbe()
+    val opener = TestProbe()
+    val dataHeader = DataHeader()
+    val journalHeader = JournalHeader(dataHeader)
     val content = ByteString("Hello, world")
+    val pageContent = content ++ ByteString(new Array[Byte](dataHeader.pageSize - content.size))
+    val initialJournalPos:Long = JournalHeader.size
     
-    def open() = {
-      system.actorOf(Props(new Actor with ActorLogging {
-        override val supervisorStrategy = OneForOneStrategy() {
-          case x =>
-            testActor ! Failure(x)
-            SupervisorStrategy.Stop
-        }
-        
-        testActor ! Success(context.actorOf(Props(classOf[PagedStorage], filename), "storage"))
-        def receive = {
-          case _ => 
-        }
-      }), "o$" + r + n + openIdx)
-      openIdx += 1
-      expectMsgType[Try[ActorRef]].get
-    }
+    val f = system.actorOf(Props(new PagedStorage("filename") {
+      override def dataFileActor() = dataFile.ref
+      override def journalFileActor() = journalFile.ref
+      override def openerActor() = opener.ref
+    }))
     
-    def close(storage: ActorRef): Unit = {
-      watch(storage)
-      storage ! PagedStorage.Shutdown
-      expectTerminated(storage, 2.seconds)      
-    }
+    f ! PagedStorage.InitialState(dataHeader, journalHeader, initialJournalIndex, PageIdx(initialPages), initialJournalPos)
   }
   
-  "a paged storage" should {
-    "be able to create a new db and reopen it" in new Fixture {
-      val storage = open()
-      eventually {
-        new File(filename).length should not be (0)
-      }
-      
-      close(storage)
-      new File(journalFilename).length should be (JournalHeader.size.toLong) 
-      
-      open()
+  "a paged file" should {
+    "return empty results if reading outside of the file" in new Fixture {       
+      f ! PagedStorage.Read(PageIdx(0))
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
+      hasread.content should be (ByteString())
     }
     
-    "parse a journal with multiple entries" in new Fixture {
-      val storage = open()
-      storage ! PagedStorage.Write(PageIdx(0) -> content)
-      storage ! PagedStorage.Write(PageIdx(1) -> content)
-      expectMsgType[PagedStorage.WriteCompleted.type]
-      expectMsgType[PagedStorage.WriteCompleted.type]
+    "return written content while still writing it" in new Fixture {
+      f ! PagedStorage.Write(PageIdx(0) -> content)
+      val write = journalFile.expectMsgType[FileActor.Write]
+      f ! PagedStorage.Read(PageIdx(0))
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
+      hasread.content should be (content)
       
-      close(storage)
-      new File(journalFilename).length should be > JournalHeader.size.toLong 
-      
-      val reopened = open()
-      
-      reopened ! PagedStorage.Read[ByteString](PageIdx(0))
-      val page0 = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
-      page0.content.take(content.length) should be (content)
-      
-      reopened ! PagedStorage.Read(PageIdx(1))
-      val page1 = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
-      page0.content.take(content.length) should be (content)
+      journalFile.reply(FileActor.WriteCompleted)
+      val haswritten = expectMsg(PagedStorage.WriteCompleted)
     }
     
-    "be able to open a data file with missing journal" in new Fixture("missing") {
-      close(open())
-      new File(journalFilename).delete()
-      close(open())
-      eventually {
-        new File(journalFilename).length should be (JournalHeader.size.toLong)         
-      }
-    }
-    
-    "be able to open a data file with zero-size journal" in new Fixture("zero") {
-      close(open())
-      new FileOutputStream(journalFilename).getChannel().truncate(0).force(true)
-      close(open())
-      eventually {        
-        new File(journalFilename).length should be (JournalHeader.size.toLong)      
-      }
-    }
-    
-    "refuse to open a zero-size data" in new Fixture {
-      new FileOutputStream(filename).getChannel().truncate(0).force(true)
-      val storage = open()
-      watch(storage)
-      expectMsgType[Failure[_]]
-      expectTerminated(storage, 2.seconds)      
-    }
-    
-    "refuse to open a data file with wrong magic" in new Fixture {
-      val out = new FileOutputStream(filename)
-      out.write("Hello".getBytes())
-      out.flush()
-      out.close()
+    "return content after storing it in the journal" in new Fixture {
+      f ! PagedStorage.Write(PageIdx(0) -> content)
+      val write = journalFile.expectMsgType[FileActor.Write]
+      write.at should be (JournalHeader.size)
+      //TODO move this to JournalEntrySpec
+      write.bytes.size should be (dataHeader.pageSize + // content
+                                  SizeOf.Int +          // number of pages (=1)
+                                  SizeOf.PageIdx +      // page number
+                                  SizeOf.MD5            // MD5
+                                  )
+      write.bytes.slice (0, 8).toList should be (1 :: 0 :: 0 :: 0 :: 
+                                                 0 :: 0 :: 0 :: 0 :: Nil)
       
-      open()
-      expectMsgType[Failure[_]]
+      journalFile.reply(FileActor.WriteCompleted)
+      val haswritten = expectMsg(PagedStorage.WriteCompleted)
+      
+      f ! PagedStorage.Write(PageIdx(1) -> content)
+      val write2 = journalFile.expectMsgType[FileActor.Write]
+      write2.at should be (write.at + write.bytes.size) // 65572
+      journalFile.reply(FileActor.WriteCompleted)
+      val haswritten2 = expectMsg(PagedStorage.WriteCompleted)
+      
+      f ! PagedStorage.Read[ByteString](PageIdx(0))
+      val read = journalFile.expectMsgType[FileActor.Read]
+      // after MD5 (16 bytes) + #pages (4 bytes) + pagenumber (4 bytes) 
+      read.from should be (write.at + 24) 
+      read.size should be (dataHeader.pageSize)
+      journalFile.reply(FileActor.ReadCompleted(pageContent))
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
+      hasread.content should be (pageContent)
+      
+      f ! PagedStorage.Read[ByteString](PageIdx(1))
+      val read2 = journalFile.expectMsgType[FileActor.Read]
+      read2.from should be (write2.at + 24)
     }
     
-    "reserve new pages into the next empty page" in new Fixture {
-      val storage = open()
-      storage ! PagedStorage.Write(PageIdx(0) -> content)
-      expectMsgType[PagedStorage.WriteCompleted.type]
-      storage ! PagedStorage.ReservePage
-      storage ! PagedStorage.ReservePage
-      expectMsg(PagedStorage.PageReserved(PageIdx(1)))
+    "return content if it is stored in the journal" in new Fixture(
+        initialPages = 2,
+        initialJournalIndex = Map(PageIdx(0) -> 24, PageIdx(1) -> 65572)) {
+      
+      f ! PagedStorage.Read(PageIdx(0))
+      val read = journalFile.expectMsgType[FileActor.Read]
+      // should read from the value in initialJournalIndex
+      read.from should be (initialJournalIndex(PageIdx(0))) 
+      read.size should be (dataHeader.pageSize)
+      journalFile.reply(FileActor.ReadCompleted(pageContent))
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
+      hasread.content should be (pageContent)      
+      
+      f ! PagedStorage.Read(PageIdx(1))
+      val read2 = journalFile.expectMsgType[FileActor.Read]
+      read2.from should be (initialJournalIndex(PageIdx(1))) 
+    }
+    
+    "return content if it is stored in the data" in new Fixture(
+        initialPages = 1) {
+      
+      f ! PagedStorage.Read(PageIdx(0))
+      val read = dataFile.expectMsgType[FileActor.Read]
+      read.from should be (DataHeader.size)
+      read.size should be (dataHeader.pageSize)
+      dataFile.reply(FileActor.ReadCompleted(pageContent))
+      val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
+      hasread.content should be (pageContent)            
+    }
+    
+    "write all pages of a multi-page write message" in new Fixture {
+      f ! (PagedStorage.Write(PageIdx(0) -> content) + (PageIdx(1) -> content))
+      val write = journalFile.expectMsgType[FileActor.Write]
+      write.at should be (JournalHeader.size)
+      write.bytes.size should be (dataHeader.pageSize * 2 + // content of two pages
+                                  SizeOf.Int +              // number of pages (=2)
+                                  SizeOf.PageIdx +          // page number of page 1
+                                  SizeOf.PageIdx +          // page number og page 2
+                                  SizeOf.MD5                // MD5
+                                  )
+      write.bytes.slice (0, 12).toList should be (2 :: 0 :: 0 :: 0 :: 
+                                                  0 :: 0 :: 0 :: 0 :: 
+                                                  1 :: 0 :: 0 :: 0 :: Nil)
+    }
+    
+    "combine queued-up writes to the same page, but send a reply for all" in new Fixture {
+      val content2 = ByteString("Hello, again!")
+      
+      f ! (PagedStorage.Write(PageIdx(0) -> content))
+      f ! (PagedStorage.Write(PageIdx(1) -> content))
+      f ! (PagedStorage.Write(PageIdx(1) -> content2))
+      
+      val write1 = journalFile.expectMsgType[FileActor.Write]
+      val sender1 = journalFile.sender
+      journalFile.expectNoMsg(100.milliseconds)
+      journalFile.send(sender1, FileActor.WriteCompleted)
+      
+      val write2 = journalFile.expectMsgType[FileActor.Write]
+      val entry = JournalEntry(journalHeader, write2.bytes)
+      entry.pages(PageIdx(1)).take(content2.length) should be (content2)
+      
+      journalFile.reply(FileActor.WriteCompleted)
+
+      expectMsg(PagedStorage.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+    }
+    
+    "return the latest version of a page that has been overwritten" in new Fixture {
+      pending
+    } 
+    
+    "reserve new pages into the next empty page number" in new Fixture {
+      f ! (PagedStorage.Write(PageIdx(0) -> content) + (PageIdx(1) -> content))
+      journalFile.expectMsgType[FileActor.Write]
+      journalFile.reply(FileActor.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+      
+      f ! PagedStorage.ReservePage
+      f ! PagedStorage.ReservePage
       expectMsg(PagedStorage.PageReserved(PageIdx(2)))
+      expectMsg(PagedStorage.PageReserved(PageIdx(3)))
     }
     
-    "refuse to open a data file with non-matching file size" in new Fixture {
-      pending
+    "stop itself if the dataFile actor dies" in new Fixture {
+      watch(f)
+      system.stop(dataFile.ref)
+      expectTerminated(f, 1.second)
     }
     
-    "fail when data file can be created but journal can't" in new Fixture {
-      pending
+    "stop itself if the journalFile actor dies" in new Fixture {
+      watch(f)
+      system.stop(journalFile.ref)
+      expectTerminated(f, 1.second)
     }
     
-    "truncate existing journal file when data file doesn't exist" in new Fixture {
-      pending
+    "stop itself if the opener actor dies" in new Fixture {
+      watch(f)
+      system.stop(opener.ref)
+      expectTerminated(f, 1.second)      
     }
-  }  
+    
+  }
+
 }
