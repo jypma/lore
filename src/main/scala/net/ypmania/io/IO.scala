@@ -50,6 +50,16 @@ object IO {
     def putPageIdx(p:PageIdx) {
       bs.putInt(p.toInt)
     }
+    
+    def putPositiveVarint(i:Integer) {
+      if (i <= 127) {
+        bs.putByte(i.toByte)
+      } else {
+        val bits = (i & 127) | 128;
+        bs.putByte(bits.toByte)
+        putPositiveVarint(i >> 7)
+      }
+    }
   }
   
   implicit class ByteIteratorOps(val i: ByteIterator) {
