@@ -20,16 +20,16 @@ case class Event(id: ID, add: Seq[Fact], delete: Seq[Fact], store: Seq[(Facet,Va
   
   def write(bs: ByteStringBuilder) {
     bs.putID(id)
-    bs.putByte(add.size.toByte)
+    bs.putPositiveVarInt(add.size)
     for (fact <- add) fact.write(bs)
-    bs.putByte(delete.size.toByte)
+    bs.putPositiveVarInt(delete.size)
     for (fact <- delete) fact.write(bs)
-    bs.putByte(store.size.toByte)
+    bs.putPositiveVarInt(store.size)
     for ((facet, value) <- store) {
       facet.write(bs)
       value.write(bs)
     }
-    bs.putByte(clear.size.toByte)
+    bs.putPositiveVarInt(clear.size)
     for (facet <- clear) facet.write(bs)
   }
 }
@@ -37,14 +37,14 @@ case class Event(id: ID, add: Seq[Fact], delete: Seq[Fact], store: Seq[(Facet,Va
 object Event {
   def apply(i: ByteIterator) = new Event(
       i.getID,
-      for (_ <- 0 until i.getByte) yield Fact(i),
-      for (_ <- 0 until i.getByte) yield Fact(i),
-      for (_ <- 0 until i.getByte) yield {
+      for (_ <- 0 until i.getPositiveVarInt) yield Fact(i),
+      for (_ <- 0 until i.getPositiveVarInt) yield Fact(i),
+      for (_ <- 0 until i.getPositiveVarInt) yield {
         val facet = Facet(i)
         val value = if (facet.prop.isTextProperty) StringValue(i) else BigDecimalValue(i)
         (facet, value)
       },
-      for (_ <- 0 until i.getByte) yield Facet(i)
+      for (_ <- 0 until i.getPositiveVarInt) yield Facet(i)
   )
   
   case class Fact(sub: ID, pred: ID, obj: ID) {
@@ -75,23 +75,21 @@ object Event {
   }
   
   case class BigDecimalValue(number: BigDecimal) extends Value {
-    require(number.toString().length < 256)
-    
     def asNumber = number
     def asText = number.toString
     def write(bs: ByteStringBuilder) {
       val scale = number.scale
       val bigint = BigInt(number.bigDecimal.unscaledValue)
       val bytes = bigint.toByteArray
-      bs.putShort(scale.toShort)
-      bs.putShort(bytes.length.toShort)
+      bs.putVarInt(scale)
+      bs.putPositiveVarInt(bytes.length)
       bs.putBytes(bytes)
     }
   }
   object BigDecimalValue {
     def apply(i: ByteIterator): BigDecimalValue = {
-      val scale = i.getShort
-      val length = i.getShort
+      val scale = i.getVarInt
+      val length = i.getPositiveVarInt
       val bytes = new Array[Byte](length)
       i.getBytes(bytes)
       BigDecimalValue(BigDecimal(BigInt(bytes), scale))
@@ -104,13 +102,13 @@ object Event {
     def asNumber = toNumber(text) getOrElse BigDecimal(0)
     def asText = text
     def write(bs: ByteStringBuilder) {
-      bs.putShort(text.length().toShort)
+      bs.putPositiveVarInt(text.length())
       bs.putBytes(text.getBytes("UTF-8"))
     }
   }
   object StringValue {
     def apply(i: ByteIterator): StringValue = {
-      val length = i.getShort
+      val length = i.getPositiveVarInt
       val bytes = new Array[Byte](length)
       i.getBytes(bytes)
       StringValue(new String(bytes, "UTF-8"))

@@ -51,14 +51,18 @@ object IO {
       bs.putInt(p.toInt)
     }
     
-    def putPositiveVarint(i:Integer) {
+    def putPositiveVarInt(i:Int) {
       if (i <= 127) {
         bs.putByte(i.toByte)
       } else {
         val bits = (i & 127) | 128;
         bs.putByte(bits.toByte)
-        putPositiveVarint(i >> 7)
+        putPositiveVarInt(i >> 7)
       }
+    }
+    
+    def putVarInt(i:Int) {
+      putPositiveVarInt((i << 1) ^ (i >> 31))
     }
   }
   
@@ -68,7 +72,23 @@ object IO {
       val l2 = i.getLong
       new ID(l1, l2)   
     }
+    
     def getPageIdx = PageIdx(i.getInt)
+    
+    def getPositiveVarInt = {
+      @tailrec def nextByte(bit: Int, value: Int): Int = {
+        val byte = i.getByte
+        val result = value | ((byte & 127) << bit)
+        if ((byte & 128) == 0) result else nextByte(bit + 7, result)        
+      }
+      nextByte(0,0)
+    }
+    
+    def getVarInt = {
+      val raw = getPositiveVarInt
+      val temp = (((raw << 31) >> 31) ^ raw) >> 1
+      temp ^ (raw & (1 << 31))      
+    }
   }
   
   private def toInt(b:ByteString) = b.asByteBuffer.getInt
