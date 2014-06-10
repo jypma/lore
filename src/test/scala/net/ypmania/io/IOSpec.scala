@@ -49,6 +49,11 @@ class IOSpec extends WordSpec with Matchers {
       fromVarint(ByteString(0x80, 1)) should be (64)
       fromVarint(ByteString(0x81, 1)) should be (-65)      
     }
+    
+    "blow up when decoding too long numbers" in {
+      intercept[IllegalArgumentException] { ByteString(0x80, 0x80, 0x80, 0x80, 0x80, 1).iterator.getPositiveVarInt }
+      intercept[IllegalArgumentException] { ByteString(0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 1).iterator.getPositiveVarLong }      
+    }
   }  
   "putting and getting positive varints" should {
     "encode the right number in various edge cases" in {
