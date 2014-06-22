@@ -77,7 +77,7 @@ object BTreePage {
       val n_pointers = i.getInt
       val pointers = TreeMap.newBuilder[ID,PageIdx]
       for (n <- 0 until n_pointers) {
-        val id = i.getID
+        val id = ID(i)
         val pagePtr = i.getPageIdx
         pointers += (id -> pagePtr)
       }
@@ -90,7 +90,7 @@ object BTreePage {
       bs.putPageIdx(page.next)
       bs.putInt(page.pointers.size)
       for ((id, pagePtr) <- page.pointers) {
-        bs.putID(id)
+        id.write(bs)
         bs.putPageIdx(pagePtr)
       }
       bs.result

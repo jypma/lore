@@ -11,9 +11,6 @@ import net.ypmania.storage.paged.PageIdx
 object IO {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN
   
-  def toID(buf: Array[Byte], ofs:Int) =
-    ID(toLong(buf, ofs), toLong(buf, ofs + 8))
-  
   def toLong(buf: Array[Byte], ofs: Int) = 
     ((buf(ofs  ) & 0xFF).asInstanceOf[Long] << 56) |
     ((buf(ofs+1) & 0xFF).asInstanceOf[Long] << 48) |
@@ -42,10 +39,6 @@ object IO {
   }
   
   implicit class ByteStringBuilderOps(val bs: ByteStringBuilder) {
-    def putID(id:ID) {
-      bs.putLong(id.l1)
-      bs.putLong(id.l2)      
-    }
     
     def putPageIdx(p:PageIdx) {
       bs.putInt(p.toInt)
@@ -81,11 +74,6 @@ object IO {
   }
   
   implicit class ByteIteratorOps(val i: ByteIterator) {
-    def getID: ID = {
-      val l1 = i.getLong
-      val l2 = i.getLong
-      new ID(l1, l2)   
-    }
     
     def getPageIdx = PageIdx(i.getInt)
     

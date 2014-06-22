@@ -11,7 +11,7 @@ import akka.testkit.TestProbe
 import akka.testkit.TestActorRef
 import akka.actor.Props
 import net.ypmania.storage.paged.PageIdx
-import net.ypmania.lore.ID
+import net.ypmania.lore.BaseID
 import net.ypmania.storage.paged.PagedStorage
 import net.ypmania.storage.atomic.AtomicActor
 
@@ -28,13 +28,13 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
   
   "A B+Tree" should {
     "be empty on creation" in new Fixture {
-      val id = ID.forBranch
+      val id = BaseID(1,1,1)
       tree ! BTree.Get(id)
       expectMsgType[BTree.NotFound]
     }
     
     "remember a single entry" in new Fixture {
-      val id = ID.forBranch
+      val id = BaseID(1,1,1)
       val page = PageIdx(123)
       tree ! BTree.Put(id, page)
       expectMsgType[BTree.PutCompleted]
@@ -49,7 +49,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     
     "split the root when 4 entries are added" in new Fixture {
       for (i <- 1 to 3) {
-        tree ! BTree.Put(ID(0,i), PageIdx(123))
+        tree ! BTree.Put(BaseID(1,1,i), PageIdx(123))
         expectMsgType[BTree.PutCompleted]
 
         val written = pagedStorage.expectMsgType[PagedStorage.Write]
@@ -59,7 +59,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
         
         pagedStorage reply PagedStorage.WriteCompleted
       }
-      tree ! BTree.Put(ID(0,4), PageIdx(123))
+      tree ! BTree.Put(BaseID(1,1,4), PageIdx(123))
       
       pagedStorage.expectMsg(PagedStorage.ReservePage) // worker reserving a new page for the new split-off node
       pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))

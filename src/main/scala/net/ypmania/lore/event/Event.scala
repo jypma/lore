@@ -8,24 +8,21 @@ import net.ypmania.io.IO._
 import akka.util.ByteStringBuilder
 import akka.util.ByteIterator
 
-case class Event(id: ID, add: Seq[Fact], delete: Seq[Fact], store: Seq[(Facet,Value)], clear: Seq[Facet]) {
-  require(add.size < 128)
-  require(delete.size < 128)
-  require(store.size < 128)
-  require(clear.size < 128)
-  for ((facet, value) <- store) {
-    if (facet.prop.isTextProperty) require(value.isInstanceOf[StringValue])
-    if (facet.prop.isValueProperty) require(value.isInstanceOf[BigDecimalValue])
-  }
+case class Event(id: ID, add: Seq[Fact], delete: Seq[Fact], storeText: Seq[(Facet,StringValue)], 
+                 storeNumber: Seq[(Facet,BigDecimalValue)], clear: Seq[Facet]) {
   
   def write(bs: ByteStringBuilder) {
-    bs.putID(id)
+    id.write(bs)
     bs.putPositiveVarInt(add.size)
     for (fact <- add) fact.write(bs)
     bs.putPositiveVarInt(delete.size)
     for (fact <- delete) fact.write(bs)
-    bs.putPositiveVarInt(store.size)
-    for ((facet, value) <- store) {
+    bs.putPositiveVarInt(storeText.size)
+    for ((facet, value) <- storeText) {
+      facet.write(bs)
+      value.write(bs)
+    }
+    for ((facet, value) <- storeNumber) {
       facet.write(bs)
       value.write(bs)
     }
@@ -36,36 +33,33 @@ case class Event(id: ID, add: Seq[Fact], delete: Seq[Fact], store: Seq[(Facet,Va
 
 object Event {
   def apply(i: ByteIterator) = new Event(
-      i.getID,
+      ID(i),
       for (_ <- 0 until i.getPositiveVarInt) yield Fact(i),
       for (_ <- 0 until i.getPositiveVarInt) yield Fact(i),
-      for (_ <- 0 until i.getPositiveVarInt) yield {
-        val facet = Facet(i)
-        val value = if (facet.prop.isTextProperty) StringValue(i) else BigDecimalValue(i)
-        (facet, value)
-      },
+      for (_ <- 0 until i.getPositiveVarInt) yield (Facet(i), StringValue(i)),
+      for (_ <- 0 until i.getPositiveVarInt) yield (Facet(i), BigDecimalValue(i)),
       for (_ <- 0 until i.getPositiveVarInt) yield Facet(i)
   )
   
   case class Fact(sub: ID, pred: ID, obj: ID) {
     def write(bs: ByteStringBuilder) {
-      bs.putID(sub)
-      bs.putID(pred)
-      bs.putID(obj)
+      sub.write(bs)
+      pred.write(bs)
+      obj.write(bs)
     }
   }
   object Fact {
-    def apply(i: ByteIterator) = new Fact(i.getID, i.getID, i.getID)
+    def apply(i: ByteIterator) = new Fact(ID(i), ID(i), ID(i))
   }
   
   case class Facet(sub: ID, prop: ID) {
     def write(bs: ByteStringBuilder) {
-      bs.putID(sub)
-      bs.putID(prop)
+      sub.write(bs)
+      prop.write(bs)
     }
   }
   object Facet {
-    def apply(i: ByteIterator) = new Facet(i.getID, i.getID)
+    def apply(i: ByteIterator) = new Facet(ID(i), ID(i))
   }
   
   trait Value {
@@ -97,8 +91,6 @@ object Event {
   }
   
   case class StringValue(text: String) extends Value {
-    require(text.length() < 256)
-    
     def asNumber = toNumber(text) getOrElse BigDecimal(0)
     def asText = text
     def write(bs: ByteStringBuilder) {

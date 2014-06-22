@@ -11,7 +11,7 @@ import akka.actor.Props
 import net.ypmania.storage.btree.BTree
 import net.ypmania.storage.paged.PagedStorage
 import net.ypmania.storage.paged.PageIdx
-import net.ypmania.lore.ID
+import net.ypmania.lore.BaseID
 import java.io.File
 import net.ypmania.storage.paged.DataHeader
 import net.ypmania.storage.atomic.AtomicActor
@@ -32,7 +32,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
   "A B-Tree in structured storage" should {
     "split into a new node when overflowing" in new Fixture {
       for (i <- 1 to 4) {
-        tree ! BTree.Put(ID(0,i), PageIdx(i))
+        tree ! BTree.Put(BaseID(1,1,i), PageIdx(i))
         expectMsgType[BTree.PutCompleted]
       }
       eventually {
@@ -42,7 +42,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     }
     
     "persist when re-opening the same file" in new Fixture {
-      tree ! BTree.Put(ID(1,1), PageIdx(123))
+      tree ! BTree.Put(BaseID(1,1,1), PageIdx(123))
       expectMsgType[BTree.PutCompleted]
       
       watch(pagedStorage)
@@ -53,7 +53,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       val atomicStorage2 = system.actorOf(Props(new AtomicActor(pagedStorage2, timeout)), "re_atomic")
       val tree2 = system.actorOf(Props(new BTree(atomicStorage2, PageIdx(0))), "re_tree")
       
-      tree2 ! BTree.Get(ID(1,1))
+      tree2 ! BTree.Get(BaseID(1,1,1))
       expectMsg(BTree.Found(PageIdx(123), None))
     }
   }
