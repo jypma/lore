@@ -5,52 +5,91 @@ import java.security.MessageDigest
 import akka.util.ByteStringBuilder
 import net.ypmania.io.IO._
 import scala.collection.immutable.TreeMap
+import akka.util.ByteIterator
 
-case class JournalEntry private (
-    header: JournalHeader,
-    pages: Map[PageIdx, ByteString], 
-    md5: ByteString) {
-  def toByteString = {
+case class JournalEntryIndex (header: JournalHeader, pageLengths: Map[PageIdx,Int], md5: ByteString) {
+  private var length: Option[Int] = None 
+  private var byteOffsets: Option[Map[PageIdx,Int]] = None
+  
+  lazy val toByteString = {
+    val offsets = Map.newBuilder[PageIdx, Int]
+    var offset = 0
     val bs = new ByteStringBuilder
-    bs.putInt(pages.size)
-    for (pageIdx ← pages.keys) {
-      bs.putPageIdx(pageIdx)
-    }
-    for (content ← pages.values) {
-      bs ++= content.zeroPad(header.pageSize)
+    bs.putPositiveVarInt(pageLengths.size)
+    for ((page, size) <- pageLengths) {
+      offsets += (page -> offset)
+      offset += size
+      bs.putPageIdx(page)
+      bs.putPositiveVarInt(size)
     }
     bs ++= md5
+    length = Some(bs.length)
+    byteOffsets = Some(offsets.result.mapValues(_ + length.get))
     bs.result
   }
   
-  def padded = copy(pages = pages.mapValues(_.zeroPad(header.pageSize)))
+  def indexSize:Int = {
+    if (length.isEmpty) toByteString
+    length.get
+  }
+  
+  def entrySize = indexSize + pageLengths.values.sum
+  
+  def byteOffset(page: PageIdx) = {
+    if (byteOffsets.isEmpty) toByteString
+    (byteOffsets.get)(page)
+  }
 }
 
-object JournalEntry {
-  def apply(header: JournalHeader, bytes: ByteString) = {
-    val i = bytes.iterator
-    val pageCount = i.getInt
-    val pageIdxs = for (p <- 0 until pageCount) yield i.getPageIdx
-    val pages = Map.newBuilder[PageIdx, ByteString]
-    
-    var pos = SizeOf.Int + (pageCount * SizeOf.PageIdx)
-    for (pageIdx <- pageIdxs) {
-      pages += (pageIdx -> bytes.slice(pos, pos + header.pageSize))
-      pos = pos + header.pageSize
-      i.drop(header.pageSize)
+case object JournalEntryIndex {
+  def apply(header: JournalHeader, i: ByteIterator) = {
+    val before = i.len
+    val pages = Map.newBuilder[PageIdx,Int]
+    for (idx <- 0 until i.getPositiveVarInt) {
+      pages += (i.getPageIdx -> i.getPositiveVarInt)
     }
     val readMd5 = new Array[Byte](SizeOf.MD5)
     i.getBytes(readMd5)
+    val length = before - i.len
+    val result = new JournalEntryIndex(header, pages.result, ByteString(readMd5))
+    result.length = Some(length)
+    result
+  }
+}
+
+case class JournalEntry private (index: JournalEntryIndex, pages: Map[PageIdx, ByteString]) {
+  
+  lazy val toByteString = {
+    val bs = new ByteStringBuilder
+    bs ++= index.toByteString 
+    for (content ← pages.values) {
+      bs ++= content
+    }
+    bs.result
+  }
+}
+
+object JournalEntry {
+  def apply(header: JournalHeader, i: ByteIterator) = {
+    val index = JournalEntryIndex(header, i)
+    val pages = Map.newBuilder[PageIdx, ByteString]
+    for ((page, length) <- index.pageLengths) {
+      // Waiting on https://www.assembla.com/spaces/ddEDvgVAKr3QrUeJe5aVNr/tickets/3516
+      pages += (page -> i.clone.take(length).toByteString)
+      i.drop(length)
+    }
+
     val pageMap = pages.result()
     val expectedMd5 = md5(header, pageMap)
-    if (expectedMd5 != ByteString(readMd5))
-      throw new Exception (s"Wrong MD5 in journal entry: expected ${expectedMd5}, got ${ByteString(readMd5)}") // TODO ignore journal from here
+    if (expectedMd5 != index.md5)
+      throw new Exception (s"Wrong MD5 in journal entry: expected ${expectedMd5}, got ${index.md5}") // TODO ignore journal from here
     
-    new JournalEntry(header, pageMap, expectedMd5)
+    new JournalEntry(index, pageMap)
   }
   
   def apply(header: JournalHeader, pages: Map[PageIdx, ByteString]) = {
-    new JournalEntry(header, pages, md5(header, pages))
+    val lengths = pages.mapValues(_.length)
+    new JournalEntry(new JournalEntryIndex(header, lengths, md5(header, pages)), pages)
   }
   
   private def md5(header: JournalHeader, pages: Map[PageIdx, ByteString]) = {

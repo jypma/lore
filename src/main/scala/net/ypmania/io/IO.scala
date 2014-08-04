@@ -41,7 +41,7 @@ object IO {
   implicit class ByteStringBuilderOps(val bs: ByteStringBuilder) {
     
     def putPageIdx(p:PageIdx) {
-      bs.putInt(p.toInt)
+      putPositiveVarInt(p.toInt)
     }
     
     def putPositiveVarInt(i:Int) {
@@ -75,7 +75,7 @@ object IO {
   
   implicit class ByteIteratorOps(val i: ByteIterator) {
     
-    def getPageIdx = PageIdx(i.getInt)
+    def getPageIdx = PageIdx(i.getPositiveVarInt)
     
     def getPositiveVarInt = {
       @tailrec def nextByte(bit: Int, value: Int): Int = {
@@ -116,6 +116,5 @@ object IO {
     val Int = 4
     val Long = 8
     val MD5 = 16
-    val PageIdx = Int
   }
 }

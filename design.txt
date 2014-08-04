@@ -3,7 +3,8 @@ header
   firstfree: freelist page (in memory)
   branchesIdx: btree node page (branch)
   branches: last branches storage page (new branches appended here, and into branchesIdx)
-  events: last event storage page (new events appended here, and into their branch's index)
+  eventsIdx: btree node page (events)
+  events: last event storage page (new events appended here, and into their branch's index, and into eventsIdx)
 
 freelist page
   next: freelist page

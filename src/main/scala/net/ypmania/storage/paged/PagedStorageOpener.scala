@@ -71,19 +71,19 @@ class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: Act
   
   def readJournal(dataHeader: DataHeader, dataPageCount: PageIdx): Unit = {
     case class ReadJournalHeader(bytes: ByteString)
-    case class ReadJournalEntrySize(bytes: ByteString)
-    case class ReadJournalEntryPages(bytes: ByteString)
+    case class ReadJournalEntryIndex(bytes: ByteString)
 
     journalFile ! FileActor.GetState
     var journalHeader: JournalHeader = null
     var journalFileSize = 0l
     var journalPos = 0l
-    val journalIndex = Map.newBuilder[PageIdx, Long]
+    val journalIndex = Map.newBuilder[PageIdx, (Long,Int)]
     var pageCount = dataPageCount
     
-    def readNextJournalEntrySize() {
+    def readNextJournalEntryIndex() {
       if (journalPos < journalFileSize) {
-        readFrom(journalFile, journalPos, SizeOf.Int)(ReadJournalEntrySize)
+        // the size of a journal entry index should not be more than 16k
+        readFrom(journalFile, journalPos, 16000)(ReadJournalEntryIndex)
       } else {
         log.debug("data file: {}", dataFile)
         log.debug("journal file: {}", journalFile)
@@ -100,7 +100,7 @@ class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: Act
         log.debug("mismatched page size")
         throw new IllegalStateException(s"Data file page size ${dataHeader.pageSize} but journal has ${journalHeader.pageSize}")
       }
-      readNextJournalEntrySize()
+      readNextJournalEntryIndex()
     }
 
     def havePage(page: PageIdx) {
@@ -131,26 +131,15 @@ class PagedStorageOpener (client: ActorRef, dataFile: ActorRef, journalFile: Act
         }
         validate
 
-      case ReadJournalEntrySize(bytes) =>
-        val pageCount = bytes.iterator.getInt
-        log.debug(s"Read journal entry with ${pageCount} pages")
-        journalPos += SizeOf.Int
-        readFrom(journalFile, journalPos, SizeOf.PageIdx * pageCount)(ReadJournalEntryPages)
-  
-      case ReadJournalEntryPages(bytes) =>
-        journalPos += bytes.size
-        val entryPageCount = bytes.size / SizeOf.PageIdx
-        log.debug(s"Parsing journal entry with ${entryPageCount} pages")
-        val iterator = bytes.iterator
-        for (i <- 0 until entryPageCount) {
-          val pageIdx = iterator.getPageIdx
-          havePage(pageIdx)
-          log.debug(s"Page ${pageIdx} is at position ${journalPos}")
-          journalIndex += (pageIdx -> journalPos)
-          journalPos += journalHeader.pageSize
+      case ReadJournalEntryIndex(bytes) =>
+        val i = bytes.iterator
+        val entry = JournalEntryIndex(journalHeader, i)
+        journalPos += entry.indexSize
+        for ((page, length) <- entry.pageLengths) {
+          journalIndex += (page -> (journalPos, length))
+          journalPos += length
         }
-        journalPos += SizeOf.MD5
-        readNextJournalEntrySize()
+        readNextJournalEntryIndex()
     }
   }
   

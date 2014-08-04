@@ -30,20 +30,12 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
   }
 
   "A B-Tree in structured storage" should {
-    "split into a new node when overflowing" in new Fixture {
+    
+    "persist when re-opening the same file" in new Fixture {
       for (i <- 1 to 4) {
         tree ! BTree.Put(BaseID(1,1,i), PageIdx(i))
         expectMsgType[BTree.PutCompleted]
       }
-      eventually {
-        // 3 BTree nodes
-        new File(filename) should have length(64*1024*3 + DataHeader.size)
-      }
-    }
-    
-    "persist when re-opening the same file" in new Fixture {
-      tree ! BTree.Put(BaseID(1,1,1), PageIdx(123))
-      expectMsgType[BTree.PutCompleted]
       
       watch(pagedStorage)
       atomicStorage ! PagedStorage.Shutdown
@@ -54,7 +46,13 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       val tree2 = system.actorOf(Props(new BTree(atomicStorage2, PageIdx(0))), "re_tree")
       
       tree2 ! BTree.Get(BaseID(1,1,1))
-      expectMsg(BTree.Found(PageIdx(123), None))
+      expectMsg(BTree.Found(PageIdx(1), None))
+      tree2 ! BTree.Get(BaseID(1,1,2))
+      expectMsg(BTree.Found(PageIdx(2), None))
+      tree2 ! BTree.Get(BaseID(1,1,3))
+      expectMsg(BTree.Found(PageIdx(3), None))
+      tree2 ! BTree.Get(BaseID(1,1,4))
+      expectMsg(BTree.Found(PageIdx(4), None))
     }
   }
 }

@@ -16,17 +16,10 @@ class JournalEntrySpec extends WordSpec with Matchers {
       val original = JournalEntry(header, 
           Map(PageIdx(1) -> ByteString("Hello, world"),
               PageIdx(2) -> ByteString("With fine people")))
-      println(original.pages)
       val bytes = original.toByteString
-      bytes.size should be (dataHeader.pageSize * 2 + // content of two pages
-                            SizeOf.Int +          // number of pages (=2)
-                            SizeOf.PageIdx +      // page number of page 1
-                            SizeOf.PageIdx +      // page number of page 2
-                            SizeOf.MD5            // MD5
-                           )
       
-      val entry = JournalEntry(header, bytes)
-      entry should be (original.padded)
+      val entry = JournalEntry(header, bytes.iterator)
+      entry should be (original)
     }
   }
 }

@@ -27,14 +27,14 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
   }
   
   class Fixture(val initialPages:Int = 0, 
-                val initialJournalIndex:Map[PageIdx, Long] = Map.empty)  {
+                val initialJournalIndex:Map[PageIdx, (Long,Int)] = Map.empty)  {
     val dataFile = TestProbe()
     val journalFile = TestProbe()
     val opener = TestProbe()
     val dataHeader = DataHeader()
     val journalHeader = JournalHeader(dataHeader)
     val content = ByteString("Hello, world")
-    val pageContent = content ++ ByteString(new Array[Byte](dataHeader.pageSize - content.size))
+    val pageContent = content
     val initialJournalPos:Long = JournalHeader.size
     
     val f = system.actorOf(Props(new PagedStorage("filename") {
@@ -68,54 +68,47 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       f ! PagedStorage.Write(PageIdx(0) -> content)
       val write = journalFile.expectMsgType[FileActor.Write]
       write.at should be (JournalHeader.size)
-      //TODO move this to JournalEntrySpec
-      write.bytes.size should be (dataHeader.pageSize + // content
-                                  SizeOf.Int +          // number of pages (=1)
-                                  SizeOf.PageIdx +      // page number
-                                  SizeOf.MD5            // MD5
-                                  )
-      write.bytes.slice (0, 8).toList should be (1 :: 0 :: 0 :: 0 :: 
-                                                 0 :: 0 :: 0 :: 0 :: Nil)
       
       journalFile.reply(FileActor.WriteCompleted)
       val haswritten = expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.Write(PageIdx(1) -> content)
       val write2 = journalFile.expectMsgType[FileActor.Write]
-      write2.at should be (write.at + write.bytes.size) // 65572
+      write2.at should be (write.at + write.bytes.size)
       journalFile.reply(FileActor.WriteCompleted)
       val haswritten2 = expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.Read[ByteString](PageIdx(0))
       val read = journalFile.expectMsgType[FileActor.Read]
-      // after MD5 (16 bytes) + #pages (4 bytes) + pagenumber (4 bytes) 
-      read.from should be (write.at + 24) 
-      read.size should be (dataHeader.pageSize)
+      val offset = 19 // expected offset within the original write where the actual page contents is stored
+      read.from should be (write.at + offset)
+      write.bytes.slice(offset, offset + content.length) should be (content)
+      read.size should be (content.length) // only read the content that has actually be written.
       journalFile.reply(FileActor.ReadCompleted(pageContent))
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)
       
       f ! PagedStorage.Read[ByteString](PageIdx(1))
       val read2 = journalFile.expectMsgType[FileActor.Read]
-      read2.from should be (write2.at + 24)
+      read2.from should be (write2.at + offset)
     }
     
     "return content if it is stored in the journal" in new Fixture(
         initialPages = 2,
-        initialJournalIndex = Map(PageIdx(0) -> 24, PageIdx(1) -> 65572)) {
+        initialJournalIndex = Map(PageIdx(0) -> (24, 200), PageIdx(1) -> (65572, 400))) {
       
       f ! PagedStorage.Read(PageIdx(0))
       val read = journalFile.expectMsgType[FileActor.Read]
       // should read from the value in initialJournalIndex
-      read.from should be (initialJournalIndex(PageIdx(0))) 
-      read.size should be (dataHeader.pageSize)
+      read.from should be (24) 
+      read.size should be (200)
       journalFile.reply(FileActor.ReadCompleted(pageContent))
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (pageContent)      
       
       f ! PagedStorage.Read(PageIdx(1))
       val read2 = journalFile.expectMsgType[FileActor.Read]
-      read2.from should be (initialJournalIndex(PageIdx(1))) 
+      read2.from should be (65572) 
     }
     
     "return content if it is stored in the data" in new Fixture(
@@ -134,15 +127,11 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       f ! (PagedStorage.Write(PageIdx(0) -> content) + (PageIdx(1) -> content))
       val write = journalFile.expectMsgType[FileActor.Write]
       write.at should be (JournalHeader.size)
-      write.bytes.size should be (dataHeader.pageSize * 2 + // content of two pages
-                                  SizeOf.Int +              // number of pages (=2)
-                                  SizeOf.PageIdx +          // page number of page 1
-                                  SizeOf.PageIdx +          // page number og page 2
-                                  SizeOf.MD5                // MD5
-                                  )
-      write.bytes.slice (0, 12).toList should be (2 :: 0 :: 0 :: 0 :: 
-                                                  0 :: 0 :: 0 :: 0 :: 
-                                                  1 :: 0 :: 0 :: 0 :: Nil)
+      
+      val entry = JournalEntry(journalHeader, write.bytes.iterator)
+      entry.pages should have size(2)
+      entry.pages(PageIdx(0)) should be (content)
+      entry.pages(PageIdx(1)) should be (content)
     }
     
     "combine queued-up writes to the same page, but send a reply for all" in new Fixture {
@@ -158,7 +147,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       journalFile.send(sender1, FileActor.WriteCompleted)
       
       val write2 = journalFile.expectMsgType[FileActor.Write]
-      val entry = JournalEntry(journalHeader, write2.bytes)
+      val entry = JournalEntry(journalHeader, write2.bytes.iterator)
       entry.pages(PageIdx(1)).take(content2.length) should be (content2)
       
       journalFile.reply(FileActor.WriteCompleted)
@@ -166,6 +155,10 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       expectMsg(PagedStorage.WriteCompleted)
       expectMsg(PagedStorage.WriteCompleted)
       expectMsg(PagedStorage.WriteCompleted)
+    }
+    
+    "not combine more than MAX_JOURNAL_ENTRY_SIZE writes" in new Fixture {
+      pending
     }
     
     "return the latest version of a page that has been overwritten" in new Fixture {
@@ -182,6 +175,19 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       f ! PagedStorage.ReservePage
       expectMsg(PagedStorage.PageReserved(PageIdx(2)))
       expectMsg(PagedStorage.PageReserved(PageIdx(3)))
+    }
+    
+    "return metadata when asked" in new Fixture {
+      f ! PagedStorage.GetMetadata
+      expectMsgType[PagedStorage.Metadata] should be (PagedStorage.Metadata(dataHeader.pageSize, PageIdx(0)))
+      
+      f ! (PagedStorage.Write(PageIdx(0) -> content))
+      journalFile.expectMsgType[FileActor.Write]
+      journalFile.reply(FileActor.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+      
+      f ! PagedStorage.GetMetadata
+      expectMsgType[PagedStorage.Metadata] should be (PagedStorage.Metadata(dataHeader.pageSize, PageIdx(1)))
     }
     
     "stop itself if the dataFile actor dies" in new Fixture {
