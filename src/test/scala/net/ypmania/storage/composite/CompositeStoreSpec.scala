@@ -66,21 +66,17 @@ class CompositeStoreSpec extends TestKit(ActorSystem("Test")) with ImplicitSende
       storage.reply(PagedStorage.ReadCompleted(CompositeStore.Composite[String](Map.empty, Map.empty)))
 
       val write = storage.expectMsgType[PagedStorage.Write]
-      write.pages should have size (1)
-      write.pages should contain key (PageIdx(2))
+      write.pages should have size (2)
+      write.pages should (contain key (PageIdx(2)) and contain key (metadataPageIdx))
       
       val content = write.pages(PageIdx(2)).content.asInstanceOf[CompositeStore.Composite[String]]
       content.storing should contain key (id)
       content.storing(id).item should be ("Hello, world")
-      storage.reply(PagedStorage.WriteCompleted)
-      
-      val metadataWrite = storage.expectMsgType[PagedStorage.Write]
-      metadataWrite.pages should have size (1)
-      metadataWrite.pages should contain key (metadataPageIdx)
-      
-      val newMetadata = metadataWrite.pages(metadataPageIdx).content.asInstanceOf[CompositeMetadata]
+
+      val newMetadata = write.pages(metadataPageIdx).content.asInstanceOf[CompositeMetadata]
       val newBytesAvailable = 5000 - 3/*ID*/ - 4/*Int(length string)*/ - "Hello, world".getBytes().length
       newMetadata should be (CompositeMetadata(Map(PageIdx(1) -> 5, PageIdx(2) -> newBytesAvailable)))
+      
       storage.reply(PagedStorage.WriteCompleted)
       
       val complete = expectMsgType[CompositeStore.StoreCompleted]
@@ -105,22 +101,17 @@ class CompositeStoreSpec extends TestKit(ActorSystem("Test")) with ImplicitSende
       storage.reply(PagedStorage.ReadCompleted(CompositeStore.Composite[String](Map.empty, Map.empty)))
       
       val write = storage.expectMsgType[PagedStorage.Write]
-      write.pages should have size (1)
-      write.pages should contain key (PageIdx(2))
+      write.pages should have size (2)
+      write.pages should (contain key (PageIdx(2)) and contain key (metadataPageIdx))
     
       val content = write.pages(PageIdx(2)).content.asInstanceOf[CompositeStore.Composite[String]]
       content.storing should contain key (id)
       content.storing(id).item should be ("Hello, world")
 
-      storage.reply(PagedStorage.WriteCompleted)
-      
-      val metadataWrite = storage.expectMsgType[PagedStorage.Write]
-      metadataWrite.pages should have size (1)
-      metadataWrite.pages should contain key (metadataPageIdx)
-      
-      val newMetadata = metadataWrite.pages(metadataPageIdx).content.asInstanceOf[CompositeMetadata]
+      val newMetadata = write.pages(metadataPageIdx).content.asInstanceOf[CompositeMetadata]
       val newBytesAvailable = 5000 - 3/*ID*/ - 4/*Int(length string)*/ - "Hello, world".getBytes().length
       newMetadata should be (CompositeMetadata(Map(PageIdx(1) -> 5, PageIdx(2) -> newBytesAvailable)))
+      
       storage.reply(PagedStorage.WriteCompleted)
       
       val complete = expectMsgType[CompositeStore.StoreCompleted]
@@ -128,8 +119,8 @@ class CompositeStoreSpec extends TestKit(ActorSystem("Test")) with ImplicitSende
     }
     
     "try a next page if metadata about a loaded page indicates more free space than is actually there" in {
-      // This might happen if a crash occurs after writing the new page content, but before the metadata.
-      
+      // Just a fallback. Implement at some point.
+      pending
     }
     
     "forget about free pages when the list does not fit in the paged storage page size anymore" in {

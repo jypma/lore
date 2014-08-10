@@ -62,16 +62,11 @@ class CompositeStore (storage: ActorRef, metadataIdx: PageIdx) extends Actor wit
         
       case msg:WriteBack[_] =>
         log.debug(s"Writing back page ${msg.page}")
-        storage ? msg.writePage map { 
-          case PagedStorage.WriteCompleted =>
-            log.debug("Paged storage signaled completion")
-            msg.client ! StoreCompleted(msg.page) 
-          case other =>
-            log.error(s"OMG $other")
-        }
-        log.debug(s"Writing back metadata page ${metadataIdx}, md now is ${metadata}")
         val newMetadata = metadata alloc (msg.page, msg.content.bytesStoring, storageMetadata.pageSize)
-        storage ! PagedStorage.Write(metadataIdx -> newMetadata)
+        log.debug(s"And metadata page ${metadataIdx}, md now is ${metadata}")
+        storage ? (msg.writePage + (metadataIdx -> newMetadata)) map { 
+          case PagedStorage.WriteCompleted => StoreCompleted(msg.page) 
+        } pipeTo msg.client 
         context become ready(newMetadata, storageMetadata)
     }
   }
