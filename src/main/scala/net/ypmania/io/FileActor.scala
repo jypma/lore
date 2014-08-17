@@ -67,7 +67,14 @@ class FileActor(path: Path, options: Seq[OpenOption]) extends Actor with Stash w
         override def completed(result: Integer, attachment: Null) {
           buf.rewind()
           log.debug("Got {} bytes, result {}", buf.remaining(), result)
-          replyTo ! ReadCompleted(ByteString(buf))
+          val bytes = ByteString(buf)
+          log.debug(s"Length ${bytes.length}")
+          val reply = if (result >= bytes.length) {
+            bytes
+          } else {
+            bytes.take(result)
+          }
+          replyTo ! ReadCompleted(reply)
         }
         
         override def failed(error: Throwable, attachment: Null) {
