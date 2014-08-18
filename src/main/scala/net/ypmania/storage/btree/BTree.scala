@@ -80,13 +80,13 @@ object BTree {
     def key: ID
   }
   
-  case class Put (key: ID, value: PageIdx, ctx: AnyRef = None) extends Keyed
-  case class PutCompleted (ctx: AnyRef)
+  case class Put (key: ID, value: PageIdx) extends Keyed
+  case object PutCompleted
   
-  case class Get (key: ID, ctx: AnyRef = None) extends Keyed
+  case class Get (key: ID) extends Keyed
   sealed trait GetCompleted
-  case class NotFound(ctx: AnyRef) extends GetCompleted
-  case class Found(value: PageIdx, ctx: AnyRef) extends GetCompleted
+  case object NotFound extends GetCompleted
+  case class Found(value: PageIdx) extends GetCompleted
   
   case class Settings(order: Int) {
     require(order > 1)

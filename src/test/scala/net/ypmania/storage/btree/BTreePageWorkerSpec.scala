@@ -30,27 +30,27 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     "be empty on creation" in new Fixture {
       val id = BaseID(1,1,1)
       tree ! BTree.Get(id)
-      expectMsgType[BTree.NotFound]
+      expectMsg(BTree.NotFound)
     }
     
     "remember a single entry" in new Fixture {
       val id = BaseID(1,1,1)
       val page = PageIdx(123)
       tree ! BTree.Put(id, page)
-      expectMsgType[BTree.PutCompleted]
+      expectMsg(BTree.PutCompleted)
       
       val written = pagedStorage.expectMsgType[PagedStorage.Write]
       val content = written.pages(PageIdx(0)).content.asInstanceOf[BTreePage]
       content.get(id) should be (Some(page))
       
       tree ! BTree.Get(id)
-      expectMsg(BTree.Found(page, None))
+      expectMsg(BTree.Found(page))
     }
     
     "split the root when 4 entries are added" in new Fixture {
       for (i <- 1 to 3) {
         tree ! BTree.Put(BaseID(1,1,i), PageIdx(123))
-        expectMsgType[BTree.PutCompleted]
+        expectMsg(BTree.PutCompleted)
 
         val written = pagedStorage.expectMsgType[PagedStorage.Write]
         val page0 = written.pages(PageIdx(0))

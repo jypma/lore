@@ -34,7 +34,7 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
   
   // Only during split do internal nodes grow
   def active(page: BTreePage): Receive = {
-    case msg @ Put(key, value, ctx) =>
+    case msg @ Put(key, value) =>
       if (page.full) {
         log.debug(s"Splitting because of ${msg}")
         val (updated, key, right) = page.split
@@ -49,15 +49,15 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
         val updated = page + (key -> value)
         log.debug(s"Writing ${updated}, replying to ${sender}")
         pagedStorage ! PagedStorage.Write(pageIdx -> updated)
-        sender ! PutCompleted(ctx)
+        sender ! PutCompleted
         context become active(updated)
       }      
       
-    case msg @ Get(key, ctx) =>
+    case msg @ Get(key) =>
       if (page.leaf) {
         val reply = page.get(key) match {
-          case Some(value) => Found(value, ctx)
-          case None => NotFound(ctx)
+          case Some(value) => Found(value)
+          case None => NotFound
         }
         sender ! reply
       } else {
@@ -100,12 +100,7 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
   
   private def childForPage(page: PageIdx) = {
     val name = page.toInt.toString
-    context.child(name) match {
-      case Some(actor) => 
-        actor
-      case None =>
-        context.actorOf(Props(new BTreePageWorker(pagedStorage, page)), name)
-    }
+    context.child(name) getOrElse context.actorOf(Props(new BTreePageWorker(pagedStorage, page)), name)
   }
 }
 
