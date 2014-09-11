@@ -85,7 +85,8 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         writing += page -> writeContent.content
         
         val pos = journalPos + journalEntry.index.byteOffset(page)
-        log.debug(s"Stored page ${page} at ${pos}")
+        log.debug(s"Stored page ${page} at ${pos}, length ${journalEntry.index.pageLengths(page)}")
+        log.debug(s"   which is ${writeContent.content} as ${journalEntry.pages(page)}")
         journalIndex(page) = (pos, journalEntry.index.pageLengths(page))
       }
       journalPos += content.size

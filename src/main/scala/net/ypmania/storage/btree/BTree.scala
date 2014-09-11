@@ -13,6 +13,7 @@ import akka.actor.Stash
 import net.ypmania.storage.atomic.AtomicActor._
 import akka.actor.PoisonPill
 import akka.actor.Terminated
+import net.ypmania.storage.btree.BTreePage.SplitResult
 
 /**
  * @param pagedStorage A PagedStorage actor wrapped in AtomicActor
@@ -31,24 +32,28 @@ class BTree(pagedStorage: ActorRef, initialRootPageIdx: PageIdx)
       context.watch(root)
       root ! PoisonPill
       pagedStorage ! PagedStorage.ReservePage
-      context become splitting(rootPage, s)
+      context become splitting(root, rootPage, s)
       
     case msg =>
       root forward msg
   }
   
-  def splitting(rootPage: PageIdx, s: Split): Receive = {
+  def splitting(root: ActorRef, rootPage: PageIdx, s: Split): Receive = {
     var terminated = false
     var newRootPageIdx: Option[PageIdx] = None
     
     def maybeDone() {
       if (terminated && newRootPageIdx.isDefined) {
-        log.debug(s"Done splitting, new root is at page ${newRootPageIdx}")
-        val page = BTreePage(false, TreeMap(s.splitKey -> rootPage), s.newPageIdx)
-        pagedStorage ! Atomic(PagedStorage.Write(newRootPageIdx.get -> page), atom = s.atom)
-        // TODO send stash to new node
-        log.warning(s"TODO handle stash ${s.stash}")
-        context become active (workerActorOf(newRootPageIdx.get), newRootPageIdx.get)
+        log.debug(s"Done splitting, new root is at page ${newRootPageIdx}, with info ${s.info}")
+        val page = s.info.asRoot
+        log.debug(s"Writing new page $page")
+        pagedStorage ! Atomic(PagedStorage.Write(newRootPageIdx.get -> page), atom = s.atom, otherSenders = Set(root))
+        
+        val newRootActor = workerActorOf(newRootPageIdx.get)
+        context become active (newRootActor, newRootPageIdx.get)
+        for (Envelope(msg, client) <- s.stash) {
+          newRootActor.tell(msg, client)
+        } 
         unstashAll()      
       }
     }
@@ -71,8 +76,7 @@ class BTree(pagedStorage: ActorRef, initialRootPageIdx: PageIdx)
   }
   
   def workerActorOf(page: PageIdx) = context.actorOf(
-      Props(new BTreePageWorker(pagedStorage, page)), 
-      page.toInt.toString)
+      Props(new BTreePageWorker(pagedStorage, page)), page.toInt.toString)
 }
 
 object BTree {
@@ -93,6 +97,6 @@ object BTree {
     val entriesPerPage = order * 2 - 1
   }
   
-  private[btree] case class Split(splitKey: ID, newPageIdx: PageIdx, stash: Vector[Envelope], atom: Atom)  
+  private[btree] case class Split(info: SplitResult, stash: Vector[Envelope], atom: Atom)  
   
 }

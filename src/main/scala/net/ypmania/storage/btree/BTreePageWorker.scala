@@ -10,7 +10,8 @@ import akka.actor.Props
 import akka.actor.Stash
 import scala.collection.immutable.TreeMap
 import akka.dispatch.Envelope
-import net.ypmania.storage.atomic.AtomicActor._
+import net.ypmania.storage.atomic.AtomicActor.Atom
+import net.ypmania.storage.atomic.AtomicActor.Atomic
 
 class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
                      (implicit val settings: BTree.Settings) 
@@ -35,74 +36,92 @@ class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx)
   // Only during split do internal nodes grow
   def active(page: BTreePage): Receive = {
     case msg @ Put(key, value) =>
+      log.debug(s"Received Put while at size ${page.size} of ${settings.entriesPerPage}")
       if (page.full) {
         log.debug(s"Splitting because of ${msg}")
-        val (updated, key, right) = page.split
         pagedStorage ! PagedStorage.ReservePage
-        context become splitting(updated, key, right)
         stash()
-      } else if (page.internal) {
-        log.debug(s"Forwarding ${msg} to a child")
-        val destination = page.lookup(key)
-        childForPage(destination) forward msg
-      } else if (page.leaf) {
-        val updated = page + (key -> value)
-        log.debug(s"Writing ${updated}, replying to ${sender}")
-        pagedStorage ! PagedStorage.Write(pageIdx -> updated)
-        sender ! PutCompleted
-        context become active(updated)
-      }      
+        context become reservingForSplit(page)
+      } else page match {
+        case internal:InternalBTreePage =>
+          log.debug(s"Forwarding ${msg} to a child")
+          val destination = internal.lookup(key)
+          childForPage(destination) forward msg
+        case leaf:LeafBTreePage =>
+          val updated = page + (key -> value)
+          log.debug(s"Writing ${updated}, replying to ${sender}")
+          pagedStorage ! PagedStorage.Write(pageIdx -> updated)
+          sender ! PutCompleted
+          context become active(updated)          
+      } 
       
     case msg @ Get(key) =>
-      if (page.leaf) {
-        val reply = page.get(key) match {
-          case Some(value) => Found(value)
-          case None => NotFound
-        }
-        sender ! reply
-      } else {
-        val childPageIdx = page.lookup(key)
-        childForPage(childPageIdx) forward msg 
+      page match {
+        case internal:InternalBTreePage =>
+          val childPageIdx = internal.lookup(key)
+          childForPage(childPageIdx) forward msg 
+        
+        case leaf:LeafBTreePage =>
+          val reply = leaf.get(key) match {
+            case Some(value) => Found(value)
+            case None => NotFound
+          }
+          sender ! reply
       }
       
-    case Split(splitKey, newPageIdx, msgs, atom) =>
-      require (!page.full)
-      val updated = page + (splitKey -> newPageIdx)
-      pagedStorage ! Atomic(PagedStorage.Write(pageIdx -> updated), atom = atom)
-      val child = childForPage(newPageIdx)
-      for (msg <- msgs) {
-        child.tell(msg.message, msg.sender)
+    case Split(info, msgs, atom) =>
+      page match {
+        case internal:InternalBTreePage if !internal.full =>
+          val updated = internal.splice(info)
+          pagedStorage ! Atomic(PagedStorage.Write(pageIdx -> updated), atom = atom, otherSenders = Set(sender))
+          val child = childForPage(info.rightPageIdx)
+          for (msg <- msgs) {
+            log.debug (s"Split, forwarding $msg")
+            child.tell(msg.message, msg.sender)
+          }          
+          context become active(updated)
       }
-      context become active(updated)
+  }
+  
+  def reservingForSplit(page: BTreePage): Receive = {
+    case PagedStorage.PageReserved(rightPageIdx) =>
+      val (left, right, splitResult) = page.split(pageIdx, rightPageIdx)
+      log.debug(s"Got reservation for new right page $rightPageIdx, splitting into $splitResult")
+      unstashAll()
+      self ! RedeliverForSplitCompleted
+      context become redeliveringForSplit(left, right, splitResult, Vector.empty)
+    case other =>
+      log.debug(s"reserving: stashing $other")
+      stash()
+  }
+  
+  def redeliveringForSplit(left: BTreePage, right: BTreePage, splitResult: SplitResult, stashForRight: Vector[Envelope]): Receive = {
+    case msg:Keyed if msg.key >= splitResult.key =>
+      log.debug(s"Stashing for new right node: $msg")
+      context become redeliveringForSplit (left, right, splitResult, stashForRight :+ Envelope(msg, sender, context.system))
       
+    case RedeliverForSplitCompleted =>
+      log.debug("Redeliveries done, completing split")
+      val atom = Atom()
+      pagedStorage ! Atomic(
+          PagedStorage.Write(pageIdx -> left) + (splitResult.rightPageIdx -> right),
+          otherSenders = Set(context.parent),
+          atom = atom)
+      context.parent ! Split(splitResult, stashForRight, atom)
+      context become active(left)
+      unstashAll()
+      
+    case other =>
+      log.debug(s"redelivering: stashing $other")
+      stash()
   }
   
-  def splitting(updated: BTreePage, splitKey: ID, right: BTreePage): Receive = {
-    var stashForRight = Vector.empty[Envelope]
-    
-    {
-      case PagedStorage.PageReserved(rightPageIdx) =>
-        log.debug(s"Completing split, new node at page ${rightPageIdx}, informing parent ${context.parent}")
-        val atom = Atom()
-        pagedStorage ! Atomic(
-            PagedStorage.Write(pageIdx -> updated) + (rightPageIdx -> right),
-            otherSenders = Set(context.parent),
-            atom = atom)
-        context.parent ! Split(splitKey, rightPageIdx, stashForRight, atom)
-        context become active(updated)
-        unstashAll()
-      case msg:Keyed if msg.key >= splitKey =>
-        stashForRight :+= Envelope(msg, sender, context.system)
-      case _ =>
-        stash()
-    }
-  }
-  
-  private def childForPage(page: PageIdx) = {
+  def childForPage(page: PageIdx) = {
     val name = page.toInt.toString
     context.child(name) getOrElse context.actorOf(Props(new BTreePageWorker(pagedStorage, page)), name)
   }
 }
 
 object BTreePageWorker {
+  private object RedeliverForSplitCompleted
 }

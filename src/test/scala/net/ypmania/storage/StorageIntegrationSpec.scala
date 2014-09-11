@@ -19,7 +19,7 @@ import scala.concurrent.duration._
 
 class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
-  class Fixture {
+  trait BaseFixture {
     implicit val settings = BTree.Settings(order = 2)
     val randomInt = Random.nextInt
     val timeout = 2.seconds
@@ -28,14 +28,48 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     val atomicStorage = system.actorOf(Props(new AtomicActor(pagedStorage, timeout)), "atomic" + randomInt)
     val tree = system.actorOf(Props(new BTree(atomicStorage, PageIdx(0))), "tree" + randomInt)
   }
+  
+  "A B-Tree initialized with 2 elements" should {
+    trait Fixture extends BaseFixture {
+      tree ! BTree.Put(BaseID(1,1,1), PageIdx(101))
+      expectMsg(BTree.PutCompleted)
+      tree ! BTree.Put(BaseID(1,1,2), PageIdx(102))
+      expectMsg(BTree.PutCompleted)
+    }
+    
+    "contain both elements" in new Fixture {
+      tree ! BTree.Get(BaseID(1,1,1))
+      expectMsg(BTree.Found(PageIdx(101)))
+      tree ! BTree.Get(BaseID(1,1,2))
+      expectMsg(BTree.Found(PageIdx(102)))      
+    }
+  }
 
-  "A B-Tree in structured storage" should {
+  "A B-Tree initialized with 4 elements, resulting in 3 used pages" should {
+    trait Fixture extends BaseFixture {
+      tree ! BTree.Put(BaseID(1,1,1), PageIdx(101))
+      expectMsg(BTree.PutCompleted)
+      tree ! BTree.Put(BaseID(1,1,2), PageIdx(102))
+      expectMsg(BTree.PutCompleted)
+      tree ! BTree.Put(BaseID(1,1,3), PageIdx(103))
+      expectMsg(BTree.PutCompleted)
+      tree ! BTree.Put(BaseID(1,1,4), PageIdx(104))
+      expectMsg(BTree.PutCompleted)     
+    }
+    
+    "contain all 4 elements" in new Fixture {
+      tree ! BTree.Get(BaseID(1,1,1))
+      expectMsg(BTree.Found(PageIdx(101)))
+      tree ! BTree.Get(BaseID(1,1,2))
+      expectMsg(BTree.Found(PageIdx(102)))
+      tree ! BTree.Get(BaseID(1,1,3))
+      expectMsg(BTree.Found(PageIdx(103)))
+      tree ! BTree.Get(BaseID(1,1,4))
+      expectMsg(BTree.Found(PageIdx(104)))      
+    }
     
     "persist when re-opening the same file" in new Fixture {
-      for (i <- 1 to 4) {
-        tree ! BTree.Put(BaseID(1,1,i), PageIdx(i))
-        expectMsgType[BTree.PutCompleted]
-      }
+      // TODO have protocol for when tree changes root node, which is now at PageIdx(2) instead of PageIdx(0).
       
       watch(pagedStorage)
       atomicStorage ! PagedStorage.Shutdown
@@ -46,13 +80,13 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       val tree2 = system.actorOf(Props(new BTree(atomicStorage2, PageIdx(0))), "re_tree")
       
       tree2 ! BTree.Get(BaseID(1,1,1))
-      expectMsg(BTree.Found(PageIdx(1), None))
+      expectMsg(BTree.Found(PageIdx(101)))
       tree2 ! BTree.Get(BaseID(1,1,2))
-      expectMsg(BTree.Found(PageIdx(2), None))
+      expectMsg(BTree.Found(PageIdx(102)))
       tree2 ! BTree.Get(BaseID(1,1,3))
-      expectMsg(BTree.Found(PageIdx(3), None))
+      expectMsg(BTree.Found(PageIdx(103)))
       tree2 ! BTree.Get(BaseID(1,1,4))
-      expectMsg(BTree.Found(PageIdx(4), None))
+      expectMsg(BTree.Found(PageIdx(104)))
     }
   }
 }

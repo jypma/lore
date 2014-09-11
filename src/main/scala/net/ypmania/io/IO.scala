@@ -44,6 +44,13 @@ object IO {
       putPositiveVarInt(p.toInt)
     }
     
+    def putOptionPageIdx(p: Option[PageIdx]) {
+      p match {
+        case Some(pageIdx) => putVarInt(pageIdx.toInt)
+        case None => putVarInt(-1)
+      }
+    }
+    
     def putPositiveVarInt(i:Int) {
       if (i <= 127) {
         bs.putByte(i.toByte)
@@ -76,6 +83,11 @@ object IO {
   implicit class ByteIteratorOps(val i: ByteIterator) {
     
     def getPageIdx = PageIdx(i.getPositiveVarInt)
+    
+    def getOptionPageIdx:Option[PageIdx] = {
+      val value = i.getVarInt
+      if (value >= 0) Some(PageIdx(value)) else None
+    }
     
     def getPositiveVarInt = {
       @tailrec def nextByte(bit: Int, value: Int): Int = {

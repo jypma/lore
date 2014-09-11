@@ -8,72 +8,103 @@ import net.ypmania.storage.paged.PageIdx
 import net.ypmania.lore.BinarySearch._
 import scala.collection.immutable.TreeMap
 import net.ypmania.io.IO._
+import BTreePage._
 
-case class BTreePage(leaf: Boolean, pointers: TreeMap[ID, PageIdx], next: PageIdx) {
-  import BTreePage._
-  
-  // leaf: 
-  //   pointers._2 are actual values, next is next leaf node (or -1)
-  // internal: 
-  //   pointers._2 are locations of page with keys  < ._2
-  //   next is the location of page with keys >= pointers.last._2
-  
-  def internal = !leaf
-  
-  def + (tuple: (ID, PageIdx)) = 
-    copy(leaf, pointers + tuple, next)
+sealed trait BTreePage {
+  def pointers: TreeMap[ID, PageIdx]
+  def split(leftPageIdx: PageIdx, rightPageIdx: PageIdx)(implicit settings: BTree.Settings): (BTreePage, BTreePage, SplitResult)
+  def + (tuple: (ID, PageIdx)): BTreePage
   
   def size = pointers.size
   
   def full (implicit settings: BTree.Settings) =
     size >= settings.entriesPerPage
-    
-  def get(id: ID): Option[PageIdx] = {
-    if (internal) throw new IllegalStateException("Accessing internal as leaf")
-    pointers.get(id)
-  }
+}
 
+case class InternalBTreePage(pointers: TreeMap[ID, PageIdx], next: PageIdx) extends BTreePage {
+  // internal: 
+  //   pointers._2 are locations of page with keys  < ._2
+  //   next is the location of page with keys >= pointers.last._2
+  
+  def + (tuple: (ID, PageIdx)) = 
+    copy(pointers + tuple, next)
+  
   def lookup(id: ID): PageIdx = {
-    if (leaf) throw new IllegalStateException("Accessing leaf as internal")
-    val elem = pointers.from(id)
-    if (elem.isEmpty)
+    val part = pointers.from(id)
+    println(s"$pointers from $id is $part")
+    if (part.isEmpty)
       next
-      else
-        elem.head._2
+    else if (part.firstKey == id) {
+      val nextPart = part.drop(1)
+      if (nextPart.isEmpty) next else nextPart.head._2
+    } else part.head._2
   }
   
-  def split(implicit settings: BTree.Settings): (BTreePage, ID, BTreePage) = {
+  def split(leftPageIdx: PageIdx, rightPageIdx: PageIdx)(implicit settings: BTree.Settings) = {
     val (left, rest) = pointers.splitAt(settings.order - 1)
     val key = rest.head
     val right = rest.tail
-    if (leaf) {
-      // for leaf nodes, the split key is copied
-      (BTreePage(leaf, left, key._2),
-       key._1,
-       BTreePage(leaf, rest, next))
+    // for internal nodes, the split key is moved to the parent
+    
+    (InternalBTreePage(left, key._2),
+     InternalBTreePage(right, next),
+     SplitResult(leftPageIdx, key._1, rightPageIdx))
+  }
+
+  def splice(info: SplitResult) = {
+    if (info.leftPageIdx == next) {
+      InternalBTreePage(pointers + (info.key -> info.leftPageIdx), info.rightPageIdx) 
     } else {
-      // for internal nodes, the split key is moved to the parent
-      (BTreePage(leaf, left, key._2),
-       key._1,
-       BTreePage(leaf, right, next))
+      val rightKey = pointers.find { case (id,page) => page == info.leftPageIdx }.get._1
+      this + (info.key -> info.leftPageIdx) + (rightKey -> info.rightPageIdx)      
     }
   }
 }
 
-object BTreePage {
-  val empty = BTreePage(true, TreeMap.empty, PageIdx(-1))
+case class LeafBTreePage(pointers: TreeMap[ID, PageIdx], next: Option[PageIdx]) extends BTreePage {
+  // leaf: 
+  //   pointers._2 are actual values, next is next leaf node (or None if this is the last node)
   
-  case class Splitting(leaf: Boolean, pointers: TreeMap[ID, PageIdx]) {
-    def splitComplete(next: PageIdx) = BTreePage(leaf, pointers, next)
+  def + (tuple: (ID, PageIdx)) = 
+    copy(pointers + tuple, next)
+  
+  def get(id: ID): Option[PageIdx] = {
+    pointers.get(id)
+  }
+
+  def split(leftPageIdx: PageIdx, rightPageIdx: PageIdx)(implicit settings: BTree.Settings) = {
+    val (left, rest) = pointers.splitAt(settings.order - 1)
+    val key = rest.head
+    val right = rest.tail
+    // for leaf nodes, the split key is copied
+    
+    (LeafBTreePage(left, Some(rightPageIdx)),
+     LeafBTreePage(rest, next),
+     SplitResult(leftPageIdx, key._1, rightPageIdx))
+  }
+}
+
+object BTreePage {
+  case class SplitResult(leftPageIdx: PageIdx, key: ID, rightPageIdx: PageIdx) {
+    def asRoot = InternalBTreePage(TreeMap(key -> leftPageIdx), rightPageIdx)
   }
   
-  implicit object Type extends PagedStorage.PageType[BTreePage] {
+  val empty:BTreePage = LeafBTreePage(TreeMap.empty, None)
+  /*
+  case class Splitting(leaf: Boolean, pointers: TreeMap[ID, PageIdx]) {
+    def splitComplete(next: PageIdx) = BTreePage(leaf, pointers, Some(next))
+  }
+  */
+  
+  implicit def mkType[T <: BTreePage]: PagedStorage.PageType[T] = t.asInstanceOf[PagedStorage.PageType[T]]
+  
+  val t = new PagedStorage.PageType[BTreePage] {
     
     def fromByteString(bytes: ByteString) = {
       val i = bytes.iterator
       val t = i.getByte
       val leaf = (t == 0) 
-      val next = i.getPageIdx
+      val next = if (leaf) i.getOptionPageIdx else Some(i.getPageIdx)
       val n_pointers = i.getInt
       val pointers = TreeMap.newBuilder[ID,PageIdx]
       for (n <- 0 until n_pointers) {
@@ -81,13 +112,23 @@ object BTreePage {
         val pagePtr = i.getPageIdx
         pointers += (id -> pagePtr)
       }
-      BTreePage(leaf, pointers.result, next)
+      if (leaf)
+        LeafBTreePage(pointers.result, next)
+      else
+        InternalBTreePage(pointers.result, next.get)
     }
     
     def toByteString(page: BTreePage) = {
       val bs = ByteString.newBuilder
-      bs.putByte(if (page.leaf) 0 else 1)
-      bs.putPageIdx(page.next)
+      page match {
+        case InternalBTreePage(pointers, next) =>
+          bs.putByte(1)
+          bs.putPageIdx(next)
+
+        case LeafBTreePage(pointers, next) =>
+          bs.putByte(0)
+          bs.putOptionPageIdx(next)
+      }
       bs.putInt(page.pointers.size)
       for ((id, pagePtr) <- page.pointers) {
         id.write(bs)

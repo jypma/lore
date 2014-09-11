@@ -14,5 +14,8 @@ class PageIdx (val idx: Int) extends AnyVal with Ordered[PageIdx] {
 }
 
 object PageIdx {
-  def apply(value: Int) = new PageIdx(value)
+  def apply(value: Int) = {
+    require (value >= 0, s"Cannot have a negative PageIdx of $value")
+    new PageIdx(value)
+  }
 }
