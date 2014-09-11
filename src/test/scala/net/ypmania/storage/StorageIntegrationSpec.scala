@@ -77,7 +77,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       
       val pagedStorage2 = system.actorOf(Props(new PagedStorage(filename)), "re_storage")
       val atomicStorage2 = system.actorOf(Props(new AtomicActor(pagedStorage2, timeout)), "re_atomic")
-      val tree2 = system.actorOf(Props(new BTree(atomicStorage2, PageIdx(0))), "re_tree")
+      val tree2 = system.actorOf(Props(new BTree(atomicStorage2, PageIdx(2))), "re_tree")
       
       tree2 ! BTree.Get(BaseID(1,1,1))
       expectMsg(BTree.Found(PageIdx(101)))
