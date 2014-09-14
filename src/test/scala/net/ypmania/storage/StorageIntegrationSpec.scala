@@ -16,6 +16,8 @@ import java.io.File
 import net.ypmania.storage.paged.DataHeader
 import net.ypmania.storage.atomic.AtomicActor
 import scala.concurrent.duration._
+import net.ypmania.storage.btree.BTree
+import net.ypmania.storage.btree.BTreePageWorker
 
 class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
@@ -26,7 +28,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     val filename = "/tmp/PagedFileSpec" + randomInt 
     val pagedStorage = system.actorOf(Props(new PagedStorage(filename)), "storage" + randomInt)
     val atomicStorage = system.actorOf(Props(new AtomicActor(pagedStorage, timeout)), "atomic" + randomInt)
-    val tree = system.actorOf(Props(new BTree(atomicStorage, PageIdx(0))), "tree" + randomInt)
+    val tree = system.actorOf(Props(new BTreePageWorker(atomicStorage, PageIdx(0), true)), "tree" + randomInt)
   }
   
   "A B-Tree initialized with 2 elements" should {
@@ -69,15 +71,13 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     }
     
     "persist when re-opening the same file" in new Fixture {
-      // TODO have protocol for when tree changes root node, which is now at PageIdx(2) instead of PageIdx(0).
-      
       watch(pagedStorage)
       atomicStorage ! PagedStorage.Shutdown
       expectTerminated(pagedStorage, 2.seconds)
       
       val pagedStorage2 = system.actorOf(Props(new PagedStorage(filename)), "re_storage")
       val atomicStorage2 = system.actorOf(Props(new AtomicActor(pagedStorage2, timeout)), "re_atomic")
-      val tree2 = system.actorOf(Props(new BTree(atomicStorage2, PageIdx(2))), "re_tree")
+      val tree2 = system.actorOf(Props(new BTreePageWorker(atomicStorage2, PageIdx(0), true)), "re_tree")
       
       tree2 ! BTree.Get(BaseID(1,1,1))
       expectMsg(BTree.Found(PageIdx(101)))

@@ -167,7 +167,13 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         val page = pageCount
         pageCount += 1
         sender ! PageReserved(page)
-      }
+    
+      case ReservePages(count) =>
+        //TODO also update freelist with this page
+        val pages = for (i <- 0 until count) yield pageCount + i
+        pageCount += count
+        sender ! PagesReserved(pages.toList)
+    }
   }
 }
 
@@ -213,6 +219,9 @@ object PagedStorage {
 
   case object ReservePage 
   case class PageReserved(page: PageIdx)
+  
+  case class ReservePages(count: Int) 
+  case class PagesReserved(pages: List[PageIdx])
   
   case object GetMetadata
   case class Metadata(pageSize: Int, pageCount: PageIdx)

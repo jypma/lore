@@ -32,7 +32,7 @@ class DatabaseActor(storage: ActorRef) extends Actor with Stash with ActorLoggin
   
   def initializing(metadata: MetadataPage): Receive = {
     implicit val btreeSettings = /*dataHeader.btreeSettings*/ BTree.Settings(12)
-    val branchesBTree = context.actorOf(Props(new BTree(storage, metadata.branchesIndex)))
+    //val branchesBTree = context.actorOf(Props(new BTree(storage, metadata.branchesIndex)))
     
     // TODO rename BTree to BTreeActor?
     // TODO make EventsActor? that encapsulates EventsPage
