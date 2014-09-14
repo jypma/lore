@@ -20,7 +20,7 @@ import akka.pattern.pipe
 import akka.util.Timeout
 import scala.concurrent.duration._
 
-class BTreePageWorker(pagedStorage: ActorRef, pageIdx: PageIdx, isRoot: Boolean)
+class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, isRoot: Boolean)
                      (implicit val settings: BTree.Settings) 
                      extends Actor with Stash with ActorLogging {
   import context.dispatcher

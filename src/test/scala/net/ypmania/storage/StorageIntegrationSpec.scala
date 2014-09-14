@@ -28,7 +28,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
     val filename = "/tmp/PagedFileSpec" + randomInt 
     val pagedStorage = system.actorOf(Props(new PagedStorage(filename)), "storage" + randomInt)
     val atomicStorage = system.actorOf(Props(new AtomicActor(pagedStorage, timeout)), "atomic" + randomInt)
-    val tree = system.actorOf(Props(new BTreePageWorker(atomicStorage, PageIdx(0), true)), "tree" + randomInt)
+    val tree = system.actorOf(BTree.props(atomicStorage, PageIdx(0)), "tree" + randomInt)
   }
   
   "A B-Tree initialized with 2 elements" should {
@@ -77,7 +77,7 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       
       val pagedStorage2 = system.actorOf(Props(new PagedStorage(filename)), "re_storage")
       val atomicStorage2 = system.actorOf(Props(new AtomicActor(pagedStorage2, timeout)), "re_atomic")
-      val tree2 = system.actorOf(Props(new BTreePageWorker(atomicStorage2, PageIdx(0), true)), "re_tree")
+      val tree2 = system.actorOf(BTree.props(atomicStorage2, PageIdx(0)), "re_tree")
       
       tree2 ! BTree.Get(BaseID(1,1,1))
       expectMsg(BTree.Found(PageIdx(101)))

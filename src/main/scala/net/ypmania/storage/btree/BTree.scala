@@ -1,21 +1,16 @@
 package net.ypmania.storage.btree
 
-import akka.actor.ActorLogging
-import akka.actor.Actor
-import akka.actor.ActorRef
-import net.ypmania.storage.paged.PageIdx
 import net.ypmania.lore.ID
-import akka.dispatch.Envelope
-import akka.actor.Props
-import scala.collection.immutable.TreeMap
-import net.ypmania.storage.paged.PagedStorage
-import akka.actor.Stash
 import net.ypmania.storage.atomic.AtomicActor._
-import akka.actor.PoisonPill
-import akka.actor.Terminated
-import net.ypmania.storage.btree.BTreePage.SplitResult
+import net.ypmania.storage.paged.PageIdx
+
+import akka.actor.ActorRef
+import akka.actor.Props
 
 object BTree {
+  def props(pagedStorage: ActorRef, rootPageIdx: PageIdx)(implicit settings: BTree.Settings) =
+    Props(new BTreePageWorker(pagedStorage, rootPageIdx, true))
+  
   trait Keyed {
     def key: ID
   }
