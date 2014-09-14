@@ -17,6 +17,7 @@ import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.dispatch.Envelope
 import scala.collection.immutable.TreeMap
+import net.ypmania.test.ParentingTestProbe
 
 class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                           with WordSpecLike with Matchers {
@@ -32,18 +33,11 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     val pagedStorage = TestProbe()
     val childWorkers = childWorkerPages.map(_ -> TestProbe()).toMap
     
-    val workerParent = TestProbe()
-    val workerActualParent = system.actorOf(Props(new Actor {
-      val worker = context.actorOf(Props(new BTreePageWorker(pagedStorage.ref, PageIdx(0), isRoot) {
+    val workerParent = ParentingTestProbe(Props(new BTreePageWorker(pagedStorage.ref, PageIdx(0), isRoot) {
         override def childForPage(page: PageIdx) = childWorkers(page).ref
-      }), "worker")
-      root.self ! worker
-      def receive = {
-        case x => workerParent.ref forward x
-      }
     }))
-    
-    val worker = expectMsgType[ActorRef]
+    val worker = workerParent.child
+
     val r = pagedStorage.expectMsgType[PagedStorage.Read[BTreePage]]
     pagedStorage reply PagedStorage.ReadCompleted(initialContent)
   }
@@ -99,7 +93,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (split.atom)
-      write.otherSenders should be (Set(workerActualParent))
+      write.otherSenders should be (Set(workerParent.actor))
       val updatedLeft = write.msg.pages(PageIdx(0)).content.asInstanceOf[LeafBTreePage]
       updatedLeft.pointers should be (Map(BaseID(1,1,1) -> PageIdx(123)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[LeafBTreePage]
@@ -131,7 +125,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (split.atom)
-      write.otherSenders should be (Set(workerActualParent))
+      write.otherSenders should be (Set(workerParent.actor))
       val updatedLeft = write.msg.pages(PageIdx(0)).content.asInstanceOf[LeafBTreePage]
       updatedLeft.pointers should be (Map(BaseID(1,1,2) -> PageIdx(123)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[LeafBTreePage]
@@ -188,7 +182,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (split.atom)
-      write.otherSenders should be (Set(workerActualParent))
+      write.otherSenders should be (Set(workerParent.actor))
       val updatedLeft = write.msg.pages(PageIdx(0)).content.asInstanceOf[InternalBTreePage]
       updatedLeft.pointers should be (Map(BaseID(1,1,2) -> PageIdx(2)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[InternalBTreePage]
