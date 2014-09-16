@@ -18,6 +18,12 @@ class BTreePageSpec extends WordSpec with Matchers {
       loaded should be (page)
     }
     
+    "more cases" in {
+      val page = LeafBTreePage(TreeMap(BaseID(1,1,481172799) -> PageIdx(155)),Some(PageIdx(2))) 
+      val loaded = BTreePage.t.fromByteString(BTreePage.t.toByteString(page))
+      
+      loaded should be (page)      
+    }
   }
   
   "A leaf, full BTreePage" should {

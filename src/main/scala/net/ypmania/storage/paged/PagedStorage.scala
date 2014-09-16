@@ -128,8 +128,14 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
           }  
         }
         
-      case read @ HaveReadPage(_, replyTo) =>  
-       replyTo ! ReadCompleted(read.value)
+      case read @ HaveReadPage(_, replyTo) =>
+        try {
+          replyTo ! ReadCompleted(read.value)
+        } catch {
+          case x:RuntimeException =>
+            log.error(s"Error unmarshalling ${read.bytes}")
+            throw x
+        }
         
       case write:Write =>
         //TODO also remove this page from freelist

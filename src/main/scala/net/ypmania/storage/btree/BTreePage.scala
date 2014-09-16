@@ -31,7 +31,6 @@ case class InternalBTreePage(pointers: TreeMap[ID, PageIdx], next: PageIdx) exte
   
   def lookup(id: ID): PageIdx = {
     val part = pointers.from(id)
-    println(s"$pointers from $id is $part")
     if (part.isEmpty)
       next
     else if (part.firstKey == id) {

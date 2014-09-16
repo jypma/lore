@@ -53,6 +53,7 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       val third = TestProbe()
       val atom1 = Atom()
       val atom2 = Atom()
+      
       actor ! Atomic(Message("1A"), Set(other.ref), atom1)
       other.send(actor, Atomic(Message("2A"), Set(third.ref), atom2))
       other.send(actor, Atomic(Message("1B"), atom = atom1))
@@ -60,6 +61,16 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       
       target.expectMsg(Message("2A", "2B"))
       target.expectMsg(Message("1A", "1B"))
+
+      val atom3 = Atom()
+      val atom4 = Atom()      
+      actor ! Atomic(Message("3A"), Set(other.ref), atom3)
+      other.send(actor, Atomic(Message("4A"), Set(third.ref), atom4))
+      other.send(actor, Atomic(Message("3B"), atom = atom3))
+      third.send(actor, Atomic(Message("4B"), atom = atom4))
+      
+      target.expectMsg(Message("4A", "4B"))
+      target.expectMsg(Message("3A", "3B"))
     }
     
     "reply to all authors when a combined message gets a reply" in new Fixture {

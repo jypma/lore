@@ -22,9 +22,9 @@ import net.ypmania.storage.btree.BTreePageWorker
 class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
   trait BaseFixture {
-    implicit val settings = BTree.Settings(order = 2)
+    implicit def settings = BTree.Settings(order = 2)
     val randomInt = Random.nextInt
-    val timeout = 2.seconds
+    def timeout = 2.seconds
     val filename = "/tmp/PagedFileSpec" + randomInt 
     val pagedStorage = system.actorOf(Props(new PagedStorage(filename)), "storage" + randomInt)
     val atomicStorage = system.actorOf(Props(new AtomicActor(pagedStorage, timeout)), "atomic" + randomInt)
@@ -89,4 +89,28 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       expectMsg(BTree.Found(PageIdx(104)))
     }
   }
+  
+  "A BTree with lots of nodes added sequentially" should {
+    trait Fixture extends BaseFixture {
+      override def settings = BTree.Settings(order = 25)
+      override def timeout = 100.seconds
+      val entries = (0 until 10000).map(i => (BaseID(1,1,Math.abs(Random.nextInt())), PageIdx(i))).toMap
+      val start = System.currentTimeMillis()
+      for ((id, idx) <- entries) {
+        tree ! BTree.Put(id, idx)
+      }
+      for ((id, idx) <- entries) {
+        expectMsg(BTree.PutCompleted)        
+      }
+      println(s"Took ${System.currentTimeMillis() - start}ms to write to ${filename}")
+    }    
+    
+    "remember them while still in memory" in new Fixture {
+      for ((id, idx) <- entries) {
+        tree ! BTree.Get(id)
+        expectMsg(BTree.Found(idx))        
+      }
+      Thread.sleep(5000)
+    }
+  } 
 }

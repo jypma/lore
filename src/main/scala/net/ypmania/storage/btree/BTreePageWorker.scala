@@ -68,8 +68,10 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
         case leaf:LeafBTreePage =>
           val updated = page + (key -> value)
           log.debug(s"Writing ${updated}, replying to ${sender}")
-          pagedStorage ! PagedStorage.Write(pageIdx -> updated)
-          sender ! PutCompleted
+          implicit val timeout = Timeout(10.seconds)
+          pagedStorage ? PagedStorage.Write(pageIdx -> updated) map {
+            case PagedStorage.WriteCompleted => PutCompleted
+          } pipeTo sender
           context become active(updated)          
       } 
       
@@ -92,14 +94,16 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       val updated = applySplit(page, info, atom)
       context become active(updated)
       
+    case PagedStorage.WriteCompleted =>
+      log.debug("Ignoring a completed write.")
   }
   
   private def applySplit(page: BTreePage, info: SplitResult, atom: Atom) = {
+    log.debug(s"Applying split $info while on page $page with atom $atom from $sender")
     page match {
       case internal:InternalBTreePage if !internal.full =>
         val updated = internal.splice(info)
         pagedStorage ! Atomic(PagedStorage.Write(pageIdx -> updated), atom = atom, otherSenders = Set(sender))
-        sender ! SplitApplied
         updated
     }
   }
@@ -113,11 +117,12 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
           PagedStorage.Write(pageIdx -> left) + (rightPageIdx -> right),
           otherSenders = Set(context.parent),
           atom = atom)
+      log.debug(s"Sending ApplySplit to ${context.parent}")
       context.parent ! ApplySplit(splitResult, atom)
       context become awaitingSplitCompletion(left, context.parent)
       
     case other =>
-      log.debug(s"reserving: stashing")
+      log.debug(s"reserving: stashing $other")
       stash()
   }
   
@@ -132,12 +137,9 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
         unstashAll()
         val (left, right, splitResult) = page.split(leftPageIdx, rightPageIdx)
         val newRoot = splitResult.asRoot
-        implicit val timeout = Timeout(10.seconds)
-        pagedStorage ? (PagedStorage.Write(pageIdx -> newRoot) + 
+        pagedStorage ! (PagedStorage.Write(pageIdx -> newRoot) + 
                                           (leftPageIdx -> left) +
-                                          (rightPageIdx -> right)) map {
-          case PagedStorage.WriteCompleted => SplitApplied 
-        } pipeTo self
+                                          (rightPageIdx -> right))
         context become awaitingSplitCompletion(newRoot, self) 
       }
     }
@@ -155,22 +157,25 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
         val updated = applySplit(page, info, atom)
         context become reservingForRootSplit(updated)
         
-      case _ =>
-        log.debug("reservingForRoot: stashing")
+      case PagedStorage.WriteCompleted =>
+        log.debug("Ignoring a completed write.")
+        
+      case other =>
+        log.debug(s"reservingForRoot: stashing $other")
         stash()
     }
   }
   
   def awaitingSplitCompletion(newPage:BTreePage, redeliverTarget: ActorRef): Receive = {
-    case SplitApplied =>
+    case PagedStorage.WriteCompleted =>
       // From now on, it is safe to send pre-split messages back to the parent for re-routing.
       // Additionally, from now on, we won't get any wrongly routed messages anymore.
       unstashAll()
       self ! RedeliverForSplitCompleted
       context become redeliveringForSplit(newPage, redeliverTarget)
       
-    case _ =>
-      log.debug(s"awaiting: stashing")
+    case other =>
+      log.debug(s"awaiting: stashing $other")
       stash()
   }
   
@@ -192,7 +197,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
 
 object BTreePageWorker {
   private[btree] case class ApplySplit(info: SplitResult, atom: Atom)
-  private[btree] case object SplitApplied
+  //private[btree] case object SplitApplied
   
   private object RedeliverForSplitCompleted
 }

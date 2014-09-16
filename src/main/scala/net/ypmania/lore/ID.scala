@@ -15,6 +15,10 @@ sealed trait ID extends Ordered[ID] {
 }
 
 case class BaseID (node: Short, time: Int, seq: Int) extends ID {
+  require(node >= 0)
+  require(time >= 0)
+  require(seq >= 0)
+  
   def compare(other: ID) = other match {
     case that: BaseID =>
       val dTime = this.time - that.time

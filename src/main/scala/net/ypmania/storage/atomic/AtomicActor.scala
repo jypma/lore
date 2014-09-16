@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicLong
 import akka.util.Timeout
 
 class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor with ActorLogging {
+  println("Timeout is " + timeout)
+  
   import AtomicActor._
   private var messages = Map.empty[Atom,QueuedMessage[_]]
   private var latestForActor = Map.empty[ActorRef,Atom]
@@ -19,22 +21,23 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
       val current = inProgress.map(_.merge(atomic, sender)).getOrElse(atomic.queue(sender))
       messages += (atomic.atom -> current)          
       
-      latestForActor.get(sender) map { atom =>
-        log.debug(s"Holding on to ${atomic.atom}:${current} from ${sender}, since ${atom} is already in progress")
-        
-        messages += (atom -> messages(atom).andThen(atomic.atom))
-        messages += (atomic.atom -> current.after(atom))
-        
-        val deps = finishableDependenciesFrom(atomic.atom)
-        if (!deps.isEmpty) mergeAndFinish(deps)
-      } getOrElse {
-        if (current.canFinish) {  
+      latestForActor.get(sender) match {
+        case Some(atom) if messages.contains(atom) =>
+          log.debug(s"Holding on to ${atomic.atom}:${current} from ${sender}, since ${atom} is already in progress")
+          
+          messages += (atom -> messages(atom).andThen(atomic.atom))
+          messages += (atomic.atom -> current.after(atom))
+          
+          val deps = finishableDependenciesFrom(atomic.atom)
+          if (!deps.isEmpty) mergeAndFinish(deps)
+          
+        case _ if current.canFinish =>
           finish(atomic.atom)
-        } else {
+          
+        case _ =>
           log.debug(s"Holding on to ${atomic.atom}:${current} from ${sender} since it can't complete yet.")
           
           latestForActor += (sender -> atomic.atom)
-        }
       }
       
     case Reply(clients, msg) =>

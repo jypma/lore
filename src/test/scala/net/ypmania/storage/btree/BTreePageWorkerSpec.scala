@@ -55,11 +55,13 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       val id = BaseID(1,1,1)
       val page = PageIdx(123)
       worker ! BTree.Put(id, page)
-      expectMsg(BTree.PutCompleted)
-      
+
       val written = pagedStorage.expectMsgType[PagedStorage.Write]
       val content = written.pages(PageIdx(0)).content.asInstanceOf[LeafBTreePage]
       content.get(id) should be (Some(page))
+      pagedStorage reply PagedStorage.WriteCompleted
+      
+      expectMsg(BTree.PutCompleted)
       
       worker ! BTree.Get(id)
       expectMsg(BTree.Found(page))
@@ -68,14 +70,14 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     "split when the 4th entry is added as rightmost key" in new Fixture {
       for (i <- 1 to 3) {
         worker ! BTree.Put(BaseID(1,1,i), PageIdx(123))
-        expectMsg(BTree.PutCompleted)
 
         val written = pagedStorage.expectMsgType[PagedStorage.Write]
         val page0 = written.pages(PageIdx(0))
         val page = page0.content.asInstanceOf[BTreePage]
         page.size should be (i)
-        
         pagedStorage reply PagedStorage.WriteCompleted
+        
+        expectMsg(BTree.PutCompleted)
       }
       val putMsg4 = BTree.Put(BaseID(1,1,4), PageIdx(123))
       worker ! putMsg4
@@ -88,9 +90,6 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,2))
       
-      workerParent reply BTreePageWorker.SplitApplied
-      workerParent.expectMsg(putMsg4) 
-      
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (split.atom)
       write.otherSenders should be (Set(workerParent.actor))
@@ -98,6 +97,10 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       updatedLeft.pointers should be (Map(BaseID(1,1,1) -> PageIdx(123)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[LeafBTreePage]
       newRight.pointers should be (Map(BaseID(1,1,2) -> PageIdx(123), BaseID(1,1,3) -> PageIdx(123)))
+      
+      pagedStorage reply PagedStorage.WriteCompleted
+      
+      workerParent.expectMsg(putMsg4) 
     }
     
   }
@@ -121,7 +124,6 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,3))
-      workerParent reply BTreePageWorker.SplitApplied
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (split.atom)
@@ -130,6 +132,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       updatedLeft.pointers should be (Map(BaseID(1,1,2) -> PageIdx(123)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[LeafBTreePage]
       newRight.pointers should be (Map(BaseID(1,1,3) -> PageIdx(123), BaseID(1,1,4) -> PageIdx(123)))
+      pagedStorage reply PagedStorage.WriteCompleted
       
       // The original put message is sent back to the parent for redelivery (it might need to have gone to the new node)
       workerParent.expectMsg(putMsg)
@@ -150,7 +153,9 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,3))
-      workerParent reply BTreePageWorker.SplitApplied
+      
+      val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
+      pagedStorage reply PagedStorage.WriteCompleted
       
       // The original put, and all intermediaries, are forward to the parent for redelivery
       workerParent.expectMsg(BTree.Put(BaseID(1,1,1), PageIdx(123)))
@@ -178,7 +183,6 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,3))
-      workerParent reply BTreePageWorker.SplitApplied
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (split.atom)
@@ -187,6 +191,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       updatedLeft.pointers should be (Map(BaseID(1,1,2) -> PageIdx(2)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[InternalBTreePage]
       newRight.pointers should be (Map(BaseID(1,1,4) -> PageIdx(4)))
+      pagedStorage reply PagedStorage.WriteCompleted
       
       workerParent.expectMsg(putMsg1)
     }
@@ -211,8 +216,9 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       write.otherSenders should be (Set(self))
       val updated = write.msg.pages(PageIdx(0)).content.asInstanceOf[BTreePage]
       updated.pointers should be (Map(BaseID(1,1,5) -> PageIdx(1), BaseID(1,1,10) -> PageIdx(2), BaseID(1,1,30) -> PageIdx(3)))
+      pagedStorage reply PagedStorage.WriteCompleted
       
-      expectMsg(BTreePageWorker.SplitApplied)
+      //expectMsg(BTreePageWorker.SplitApplied)
     }
   }
   
