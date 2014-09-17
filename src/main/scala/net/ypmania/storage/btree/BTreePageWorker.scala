@@ -50,11 +50,6 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
         stash()
         if (isRoot) {
           pagedStorage ! PagedStorage.ReservePages(2)
-          log.debug(s"Awaiting death of ${context.children}")
-          for (child <- context.children) {
-            context.watch(child)
-            child ! PoisonPill
-          }
           context become reservingForRootSplit(page)
         } else {
           pagedStorage ! PagedStorage.ReservePage
@@ -64,7 +59,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
         case internal:InternalBTreePage =>
           val destination = internal.lookup(key)
           log.debug(s"Forwarding ${msg} to child $destination")
-          childForPage(destination) forward msg
+          context.parent forward ToChild(destination, msg)
         case leaf:LeafBTreePage =>
           val updated = page + (key -> value)
           log.debug(s"Writing ${updated}, replying to ${sender}")
@@ -80,7 +75,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
         case internal:InternalBTreePage =>
           log.debug(s"Forwarding $msg to child")
           val childPageIdx = internal.lookup(key)
-          childForPage(childPageIdx) forward msg 
+          context.parent forward ToChild(childPageIdx, msg)
         
         case leaf:LeafBTreePage =>
           val reply = leaf.get(key) match {
@@ -127,43 +122,24 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   }
   
   def reservingForRootSplit(page: BTreePage): Receive = {
-    var awaitingChildren = context.children.toSet
-    var reservedPages:Option[(PageIdx, PageIdx)] = None
-    
-    def maybeDone() {
-      if (awaitingChildren.isEmpty && reservedPages.isDefined) {
-        log.debug("All children have died, and received reserved pages. Splitting.")
-        val (leftPageIdx, rightPageIdx) = reservedPages.get
-        unstashAll()
-        val (left, right, splitResult) = page.split(leftPageIdx, rightPageIdx)
-        val newRoot = splitResult.asRoot
-        pagedStorage ! (PagedStorage.Write(pageIdx -> newRoot) + 
-                                          (leftPageIdx -> left) +
-                                          (rightPageIdx -> right))
-        context become awaitingSplitCompletion(newRoot, self) 
-      }
-    }
-    
-    return {
-      case Terminated(child) =>
-        awaitingChildren -= child
-        maybeDone()
+    case PagedStorage.PagesReserved(leftPageIdx :: rightPageIdx :: Nil) =>
+      val (left, right, splitResult) = page.split(leftPageIdx, rightPageIdx)
+      val newRoot = splitResult.asRoot
+      pagedStorage ! (PagedStorage.Write(pageIdx -> newRoot) + 
+                                        (leftPageIdx -> left) +
+                                        (rightPageIdx -> right))
+      context become awaitingSplitCompletion(newRoot, self) 
       
-      case PagedStorage.PagesReserved(leftPageIdx :: rightPageIdx :: Nil) =>
-        reservedPages = Some(leftPageIdx, rightPageIdx)
-        maybeDone()
-        
-      case ApplySplit(info, atom) =>
-        val updated = applySplit(page, info, atom)
-        context become reservingForRootSplit(updated)
-        
-      case PagedStorage.WriteCompleted =>
-        log.debug("Ignoring a completed write.")
-        
-      case other =>
-        log.debug(s"reservingForRoot: stashing $other")
-        stash()
-    }
+    case ApplySplit(info, atom) =>
+      val updated = applySplit(page, info, atom)
+      context become reservingForRootSplit(updated)
+      
+    case PagedStorage.WriteCompleted =>
+      log.debug("Ignoring a completed write.")
+      
+    case other =>
+      log.debug(s"reservingForRoot: stashing $other")
+      stash()
   }
   
   def awaitingSplitCompletion(newPage:BTreePage, redeliverTarget: ActorRef): Receive = {
@@ -188,15 +164,9 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       log.debug(s"Redelivering $msg to ${context.parent}")
       target forward msg
   }
-  
-  def childForPage(page: PageIdx) = {
-    val name = page.toInt.toString
-    context.child(name) getOrElse context.actorOf(Props(new BTreePageWorker(pagedStorage, page, false)), name)
-  }
 }
 
 object BTreePageWorker {
-  private[btree] case class ApplySplit(info: SplitResult, atom: Atom)
   //private[btree] case object SplitApplied
   
   private object RedeliverForSplitCompleted

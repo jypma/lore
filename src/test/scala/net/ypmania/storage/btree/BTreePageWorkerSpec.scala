@@ -22,20 +22,19 @@ import net.ypmania.test.ParentingTestProbe
 class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
                           with WordSpecLike with Matchers {
   root =>
+    
+  import BTree._
+  import BTreePageWorker._
   
   trait BaseFixture {
-    implicit val settings = BTree.Settings(order = 2)
+    implicit val settings = Settings(order = 2)
     
     def initialContent = BTreePage.empty
-    def childWorkerPages = Set.empty[PageIdx]
     
     def isRoot = false
     val pagedStorage = TestProbe()
-    val childWorkers = childWorkerPages.map(_ -> TestProbe()).toMap
     
-    val workerParent = ParentingTestProbe(Props(new BTreePageWorker(pagedStorage.ref, PageIdx(0), isRoot) {
-        override def childForPage(page: PageIdx) = childWorkers(page).ref
-    }))
+    val workerParent = ParentingTestProbe(Props(new BTreePageWorker(pagedStorage.ref, PageIdx(0), isRoot)))
     val worker = workerParent.child
 
     val r = pagedStorage.expectMsgType[PagedStorage.Read[BTreePage]]
@@ -47,29 +46,29 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     
     "return no content when getting nodes" in new Fixture {
       val id = BaseID(1,1,1)
-      worker ! BTree.Get(id)
+      worker ! Get(id)
       expectMsg(BTree.NotFound)
     }
     
     "remember a single entry" in new Fixture {
       val id = BaseID(1,1,1)
       val page = PageIdx(123)
-      worker ! BTree.Put(id, page)
+      worker ! Put(id, page)
 
       val written = pagedStorage.expectMsgType[PagedStorage.Write]
       val content = written.pages(PageIdx(0)).content.asInstanceOf[LeafBTreePage]
       content.get(id) should be (Some(page))
       pagedStorage reply PagedStorage.WriteCompleted
       
-      expectMsg(BTree.PutCompleted)
+      expectMsg(PutCompleted)
       
-      worker ! BTree.Get(id)
-      expectMsg(BTree.Found(page))
+      worker ! Get(id)
+      expectMsg(Found(page))
     }
     
     "split when the 4th entry is added as rightmost key" in new Fixture {
       for (i <- 1 to 3) {
-        worker ! BTree.Put(BaseID(1,1,i), PageIdx(123))
+        worker ! Put(BaseID(1,1,i), PageIdx(123))
 
         val written = pagedStorage.expectMsgType[PagedStorage.Write]
         val page0 = written.pages(PageIdx(0))
@@ -77,15 +76,15 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
         page.size should be (i)
         pagedStorage reply PagedStorage.WriteCompleted
         
-        expectMsg(BTree.PutCompleted)
+        expectMsg(PutCompleted)
       }
-      val putMsg4 = BTree.Put(BaseID(1,1,4), PageIdx(123))
+      val putMsg4 = Put(BaseID(1,1,4), PageIdx(123))
       worker ! putMsg4
       
       pagedStorage.expectMsg(PagedStorage.ReservePage)
       pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))
 
-      val split = workerParent.expectMsgType[BTreePageWorker.ApplySplit]
+      val split = workerParent.expectMsgType[ApplySplit]
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,2))
@@ -100,6 +99,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       
       pagedStorage reply PagedStorage.WriteCompleted
       
+      // The original put message is sent back to the parent for redelivery (it might need to have gone to the new node)
       workerParent.expectMsg(putMsg4) 
     }
     
@@ -120,7 +120,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       pagedStorage.expectMsg(PagedStorage.ReservePage) 
       pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))
 
-      val split = workerParent.expectMsgType[BTreePageWorker.ApplySplit]
+      val split = workerParent.expectMsgType[ApplySplit]
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,3))
@@ -139,17 +139,17 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     }
     
     "forward stashed messages designated for the new child node during a split" in new Fixture {
-      worker ! BTree.Put(BaseID(1,1,1), PageIdx(123))
+      worker ! Put(BaseID(1,1,1), PageIdx(123))
       pagedStorage.expectMsg(PagedStorage.ReservePage) 
 
       // Intermediate put comes in that should go to the new (right) node
-      worker ! BTree.Put(BaseID(1,1,5), PageIdx(123))
+      worker ! Put(BaseID(1,1,5), PageIdx(123))
       
       // Intermediate put comes in that should go to the old (left) node
-      worker ! BTree.Put(BaseID(1,1,0), PageIdx(123))
+      worker ! Put(BaseID(1,1,0), PageIdx(123))
       
       pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))
-      val split = workerParent.expectMsgType[BTreePageWorker.ApplySplit]
+      val split = workerParent.expectMsgType[ApplySplit]
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,3))
@@ -169,17 +169,16 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       override def initialContent = InternalBTreePage(TreeMap(
           BaseID(1,1,2) -> PageIdx(2), BaseID(1,1,3) -> PageIdx(3), BaseID(1,1,4) -> PageIdx(4)),
           PageIdx(5))
-      override def childWorkerPages = Set(PageIdx(2))
     }
     
     "split on the next put message, then forward it to the parent" in new Fixture {
-      val putMsg1 = BTree.Put(BaseID(1,1,1), PageIdx(123))
+      val putMsg1 = Put(BaseID(1,1,1), PageIdx(123))
       worker ! putMsg1
       
       pagedStorage.expectMsg(PagedStorage.ReservePage) 
       pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))
 
-      val split = workerParent.expectMsgType[BTreePageWorker.ApplySplit]
+      val split = workerParent.expectMsgType[ApplySplit]
       split.info.leftPageIdx should be (PageIdx(0))
       split.info.rightPageIdx should be (PageIdx(1))
       split.info.key should be (BaseID(1,1,3))
@@ -202,14 +201,13 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       override def initialContent = InternalBTreePage(TreeMap(
           BaseID(1,1,10) -> PageIdx(1), BaseID(1,1,30) -> PageIdx(3)),
           PageIdx(4))
-      override def childWorkerPages = Set(PageIdx(1), PageIdx(2), PageIdx(3), PageIdx(4))
     }
     
     "when receiving a Split, correctly update itself" in new Fixture {
       object StashMessage
       val stashSender = TestProbe()
       val atom = AtomicActor.Atom()
-      worker ! BTreePageWorker.ApplySplit(BTreePage.SplitResult(PageIdx(1), BaseID(1,1,5), PageIdx(2)), atom)
+      worker ! ApplySplit(BTreePage.SplitResult(PageIdx(1), BaseID(1,1,5), PageIdx(2)), atom)
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
       write.atom should be (atom)
@@ -217,8 +215,6 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       val updated = write.msg.pages(PageIdx(0)).content.asInstanceOf[BTreePage]
       updated.pointers should be (Map(BaseID(1,1,5) -> PageIdx(1), BaseID(1,1,10) -> PageIdx(2), BaseID(1,1,30) -> PageIdx(3)))
       pagedStorage reply PagedStorage.WriteCompleted
-      
-      //expectMsg(BTreePageWorker.SplitApplied)
     }
   }
   
@@ -228,11 +224,10 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       override def initialContent = InternalBTreePage(TreeMap(
           BaseID(1,1,2) -> PageIdx(2), BaseID(1,1,3) -> PageIdx(3), BaseID(1,1,4) -> PageIdx(4)),
           PageIdx(5))
-      override def childWorkerPages = Set(PageIdx(3), PageIdx(7))
     }
 
-    "when receiving another put, kill all childs, split off a new left and right node, and remain root" in new Fixture {
-      val putMsg1 = BTree.Put(BaseID(1,1,1), PageIdx(123))
+    "when receiving another put, split off a new left and right node, and remain root" in new Fixture {
+      val putMsg1 = Put(BaseID(1,1,1), PageIdx(123))
       worker ! putMsg1
       
       pagedStorage.expectMsg(PagedStorage.ReservePages(2)) 
@@ -249,7 +244,7 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       pagedStorage.reply(PagedStorage.WriteCompleted)
       
       // The original Put for BaseId(1,1,1) will now be forwarded to PageIdx(7), since that's what the new root says
-      childWorkers(PageIdx(7)).expectMsg(putMsg1)
+      workerParent.expectMsg(ToChild(PageIdx(7), putMsg1))
     }
   }
 }
