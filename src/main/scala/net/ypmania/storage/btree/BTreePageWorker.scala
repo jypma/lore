@@ -19,6 +19,7 @@ import akka.pattern.ask
 import akka.pattern.pipe
 import akka.util.Timeout
 import scala.concurrent.duration._
+import com.typesafe.scalalogging.StrictLogging
 
 class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, isRoot: Boolean)
                      (implicit val settings: BTree.Settings) 
@@ -29,12 +30,12 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   import BTreePage._
   import BTreePageWorker._
   
-  log.debug(s"Starting worker for page ${pageIdx}")
+  log.debug("Starting worker for page {}", pageIdx)
   pagedStorage ! PagedStorage.Read[BTreePage](pageIdx)
   
   def receive = {
     case PagedStorage.ReadCompleted(page: BTreePage) =>
-      log.debug(s"Page ${pageIdx} received as ${page}")
+      log.debug("Page {} received as {}", pageIdx, page)
       unstashAll()
       context become active(page)
     case _ => 
@@ -44,9 +45,9 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   // Only during split do internal nodes grow
   def active(page: BTreePage): Receive = {
     case msg @ Put(key, value) =>
-      log.debug(s"Received Put while at size ${page.size} of ${settings.entriesPerPage}")
+      log.debug("Received Put while at size {} of {}", page.size, settings.entriesPerPage)
       if (page.full) {
-        log.debug(s"Splitting because of ${msg}")
+        log.debug("Splitting because of {}", msg)
         stash()
         if (isRoot) {
           pagedStorage ! PagedStorage.ReservePages(2)
@@ -58,12 +59,12 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       } else page match {
         case internal:InternalBTreePage =>
           val destination = internal.lookup(key)
-          log.debug(s"Forwarding ${msg} to child $destination")
+          log.debug("Forwarding {} to child {}", msg, destination)
           context.parent forward ToChild(destination, msg)
         case leaf:LeafBTreePage =>
           val updated = page + (key -> value)
-          log.debug(s"Writing ${updated}, replying to ${sender}")
-          implicit val timeout = Timeout(10.seconds)
+          log.debug("Writing {}, replying to {}", updated, sender)
+          implicit val timeout = Timeout(10.minutes)
           pagedStorage ? PagedStorage.Write(pageIdx -> updated) map {
             case PagedStorage.WriteCompleted => PutCompleted
           } pipeTo sender
@@ -73,7 +74,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
     case msg @ Get(key) =>
       page match {
         case internal:InternalBTreePage =>
-          log.debug(s"Forwarding $msg to child")
+          log.debug("Forwarding {} to child", msg)
           val childPageIdx = internal.lookup(key)
           context.parent forward ToChild(childPageIdx, msg)
         
@@ -94,7 +95,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   }
   
   private def applySplit(page: BTreePage, info: SplitResult, atom: Atom) = {
-    log.debug(s"Applying split $info while on page $page with atom $atom from $sender")
+    log.debug("Applying split {} while on page {} with atom {} from {}", info, page, atom, sender)
     page match {
       case internal:InternalBTreePage if !internal.full =>
         val updated = internal.splice(info)
@@ -106,18 +107,18 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   def reservingForSplit(page: BTreePage): Receive = {
     case PagedStorage.PageReserved(rightPageIdx) =>
       val (left, right, splitResult) = page.split(pageIdx, rightPageIdx)
-      log.debug(s"Got reservation for new right page $rightPageIdx, splitting into $splitResult")
+      log.debug("Got reservation for new right page {}, splitting into {}", rightPageIdx, splitResult)
       val atom = Atom()
       pagedStorage ! Atomic(
           PagedStorage.Write(pageIdx -> left) + (rightPageIdx -> right),
           otherSenders = Set(context.parent),
           atom = atom)
-      log.debug(s"Sending ApplySplit to ${context.parent}")
+      log.debug("Sending ApplySplit to {}", context.parent)
       context.parent ! ApplySplit(splitResult, atom)
       context become awaitingSplitCompletion(left, context.parent)
       
     case other =>
-      log.debug(s"reserving: stashing $other")
+      log.debug("reserving: stashing {}", other)
       stash()
   }
   
@@ -138,7 +139,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       log.debug("Ignoring a completed write.")
       
     case other =>
-      log.debug(s"reservingForRoot: stashing $other")
+      log.debug("reservingForRoot: stashing {}", other)
       stash()
   }
   
@@ -151,7 +152,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       context become redeliveringForSplit(newPage, redeliverTarget)
       
     case other =>
-      log.debug(s"awaiting: stashing $other")
+      log.debug("awaiting: stashing {}", other)
       stash()
   }
   
@@ -161,7 +162,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       context become active(newPage)
       
     case msg =>
-      log.debug(s"Redelivering $msg to ${context.parent}")
+      log.debug(s"Redelivering {} to {}", msg, context.parent)
       target forward msg
   }
 }

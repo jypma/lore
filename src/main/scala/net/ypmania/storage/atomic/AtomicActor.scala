@@ -23,7 +23,7 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
       
       latestForActor.get(sender) match {
         case Some(atom) if messages.contains(atom) =>
-          log.debug(s"Holding on to ${atomic.atom}:${current} from ${sender}, since ${atom} is already in progress")
+          log.debug("Holding on to {}:{} from {}, since {} is already in progress", atomic.atom, current, sender, atom)
           
           messages += (atom -> messages(atom).andThen(atomic.atom))
           messages += (atomic.atom -> current.after(atom))
@@ -35,7 +35,7 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
           finish(atomic.atom)
           
         case _ =>
-          log.debug(s"Holding on to ${atomic.atom}:${current} from ${sender} since it can't complete yet.")
+          log.debug("Holding on to {}:{} from {} since it can't complete yet.", atomic.atom, current, sender)
           
           latestForActor += (sender -> atomic.atom)
       }
@@ -76,11 +76,11 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
   private def finish(atom: Atom): Unit = {
     val present = messages.get(atom)
     if (present.isEmpty) {
-      log.debug(s"${atom} apparently already finished, skipping.")
+      log.debug("{} apparently already finished, skipping.", atom)
       return
     }
     val msg = present.get
-    log.debug(s"Finishing ${atom}:${msg}")
+    log.debug("Finishing {}:{}", atom, msg)
     
     import context.dispatcher
     target ? msg.msg map { Reply(msg.received, _) } pipeTo self

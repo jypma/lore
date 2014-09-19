@@ -85,14 +85,15 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         writing += page -> writeContent.content
         
         val pos = journalPos + journalEntry.index.byteOffset(page)
-        log.debug(s"Stored page ${page} at ${pos}, length ${journalEntry.index.pageLengths(page)}")
-        log.debug(s"   which is ${writeContent.content} as ${journalEntry.pages(page)}")
+        log.debug("Stored page {} at ${}, length {}", page, pos, journalEntry.index.pageLengths(page))
+        //log.debug(s"   which is ${writeContent.content} as ${journalEntry.pages(page)}")
         journalIndex(page) = (pos, journalEntry.index.pageLengths(page))
       }
       journalPos += content.size
     }
     
     def emptyWriteQueue() {
+      log.debug("Emptying write queue of size {}", nextWrite.size)
       for (write <- nextWrite) {
         performWrite(write, nextWriteSenders)
       }
@@ -106,23 +107,23 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     
     context.become {
       case read:Read[_] =>
-        log.debug(s"processing read(${read.page}) for ${sender}")
+        log.debug("processing read {} for {}", read.page, sender)
         writing.get(read.page).map { content =>
-          log.debug(s"Replying in-transit write content to ${sender}")
+          log.debug("Replying in-transit write content to {}", sender)
           sender ! ReadCompleted(content)
         }.getOrElse {
           journalIndex.get(read.page).map { case (pos, length) =>
-            log.debug(s"Found page ${read.page} in journal at pos ${pos} with length ${length}")
+            log.debug("Found page {} in journal at pos {} with length {}", read.page, pos, length)
             val client = sender
             readFrom(journalFile, pos, length)(read.haveRead(_, client))
           }.getOrElse {
             if (read.page >= pageCount) {
-              log.debug(s"Trying to read page ${read.page} but only have ${pageCount}. Returning empty.")
+              log.debug("Trying to read page {} but only have {}. Returning empty.", read.page, pageCount)
               sender ! ReadCompleted(read.emptyResult)
             } else {
               val pos = dataHeader.offsetForPage(read.page)
               val client = sender
-              log.debug(s"Reading page ${read.page} from data at pos ${pos} for ${sender}")
+              log.debug("Reading page {} from data at pos {} for {}", read.page, pos, sender)
               readFrom(dataFile, pos, dataHeader.pageSize)(read.haveRead(_, client))
             }
           }  
@@ -133,7 +134,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
           replyTo ! ReadCompleted(read.value)
         } catch {
           case x:RuntimeException =>
-            log.error(s"Error unmarshalling ${read.bytes}")
+            log.error("Error unmarshalling {}", read.bytes)
             throw x
         }
         

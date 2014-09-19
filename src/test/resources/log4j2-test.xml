@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+	<Appenders>
+		<Console name="Console" target="SYSTEM_OUT">
+			<PatternLayout pattern="%d{HH:mm:ss.SSS} {%10.10t} [%-5level] %logger{1.} %.30X{akkaSource} - %msg%n" />
+		</Console>
+	</Appenders>
+	<Loggers>
+    <Logger name="net.ypmania.storage.paged" level="debug"/>
+	  <Logger name="net.ypmania" level="warn"/>
+	   
+		<Root level="debug">
+			<AppenderRef ref="Console" />
+		</Root>
+	</Loggers>
+</Configuration>
