@@ -6,7 +6,7 @@
 		</Console>
 	</Appenders>
 	<Loggers>
-    <Logger name="net.ypmania.storage.paged" level="debug"/>
+    <Logger name="net.ypmania.storage.paged" level="warn"/>
 	  <Logger name="net.ypmania" level="warn"/>
 	   
 		<Root level="debug">

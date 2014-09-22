@@ -162,7 +162,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       context become active(newPage)
       
     case msg =>
-      log.debug(s"Redelivering {} to {}", msg, context.parent)
+      log.debug("Redelivering {} to {}", msg, context.parent)
       target forward msg
   }
 }

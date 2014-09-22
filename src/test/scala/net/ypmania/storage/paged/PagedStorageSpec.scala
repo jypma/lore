@@ -53,30 +53,56 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       hasread.content should be (ByteString())
     }
     
-    "return written content while still writing it" in new Fixture {
+    "return in-transit content while still writing it" in new Fixture {
       f ! PagedStorage.Write(PageIdx(0) -> content)
+      expectMsg(PagedStorage.WriteCompleted)
+      
       val write = journalFile.expectMsgType[FileActor.Write]
       f ! PagedStorage.Read(PageIdx(0))
       val hasread = expectMsgType[PagedStorage.ReadCompleted[ByteString]]
       hasread.content should be (content)
       
       journalFile.reply(FileActor.WriteCompleted)
-      val haswritten = expectMsg(PagedStorage.WriteCompleted)
+    }
+    
+    "reply in-transit data for a write that was queued while another write is being written" in new Fixture {
+      f ! PagedStorage.Write(PageIdx(0) -> content)
+      expectMsg(PagedStorage.WriteCompleted)
+      
+      journalFile.expectMsgType[FileActor.Write]
+      val writeSender1 = journalFile.sender
+      
+      f ! PagedStorage.Write(PageIdx(2) -> content)
+      expectMsg(PagedStorage.WriteCompleted)
+      
+      // Expect the write to be queued, since the previous call to journalFile is still ongoing
+      journalFile.expectNoMsg(100.milliseconds)
+      
+      f ! PagedStorage.Read(PageIdx(2))
+      expectMsg(PagedStorage.ReadCompleted(content))
+      
+      journalFile.send(writeSender1, FileActor.WriteCompleted)
+      
+      // Expect and reply to the queued write
+      journalFile.expectMsgType[FileActor.Write]
+      journalFile.reply(FileActor.WriteCompleted)
     }
     
     "return content after storing it in the journal" in new Fixture {
       f ! PagedStorage.Write(PageIdx(0) -> content)
+      expectMsg(PagedStorage.WriteCompleted)
+      
       val write = journalFile.expectMsgType[FileActor.Write]
       write.at should be (JournalHeader.size)
       
       journalFile.reply(FileActor.WriteCompleted)
-      val haswritten = expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.Write(PageIdx(1) -> content)
+      expectMsg(PagedStorage.WriteCompleted)
+      
       val write2 = journalFile.expectMsgType[FileActor.Write]
       write2.at should be (write.at + write.bytes.size)
       journalFile.reply(FileActor.WriteCompleted)
-      val haswritten2 = expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.Read[ByteString](PageIdx(0))
       val read = journalFile.expectMsgType[FileActor.Read]
@@ -125,6 +151,7 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
     
     "write all pages of a multi-page write message" in new Fixture {
       f ! (PagedStorage.Write(PageIdx(0) -> content) + (PageIdx(1) -> content))
+      expectMsg(PagedStorage.WriteCompleted)
       val write = journalFile.expectMsgType[FileActor.Write]
       write.at should be (JournalHeader.size)
       
@@ -141,6 +168,10 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       f ! (PagedStorage.Write(PageIdx(1) -> content))
       f ! (PagedStorage.Write(PageIdx(1) -> content2))
       
+      expectMsg(PagedStorage.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+      expectMsg(PagedStorage.WriteCompleted)
+      
       val write1 = journalFile.expectMsgType[FileActor.Write]
       val sender1 = journalFile.sender
       journalFile.expectNoMsg(100.milliseconds)
@@ -152,9 +183,11 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       
       journalFile.reply(FileActor.WriteCompleted)
 
-      expectMsg(PagedStorage.WriteCompleted)
-      expectMsg(PagedStorage.WriteCompleted)
-      expectMsg(PagedStorage.WriteCompleted)
+    }
+    
+    // TODO rename WriteCompleted to WriteAccepted, and make WriteCompleted be the WriteAccepted
+    "return regular WriteSaved messages that correspond to the sequence returned by WriteCompleted" in new Fixture {
+      pending
     }
     
     "not combine more than MAX_JOURNAL_ENTRY_SIZE writes" in new Fixture {
@@ -167,9 +200,9 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
     
     "reserve new pages into the next empty page number" in new Fixture {
       f ! (PagedStorage.Write(PageIdx(0) -> content) + (PageIdx(1) -> content))
+      expectMsg(PagedStorage.WriteCompleted)
       journalFile.expectMsgType[FileActor.Write]
       journalFile.reply(FileActor.WriteCompleted)
-      expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.ReservePage
       f ! PagedStorage.ReservePage
@@ -182,9 +215,9 @@ class PagedStorageSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       expectMsgType[PagedStorage.Metadata] should be (PagedStorage.Metadata(dataHeader.pageSize, PageIdx(0)))
       
       f ! (PagedStorage.Write(PageIdx(0) -> content))
+      expectMsg(PagedStorage.WriteCompleted)
       journalFile.expectMsgType[FileActor.Write]
       journalFile.reply(FileActor.WriteCompleted)
-      expectMsg(PagedStorage.WriteCompleted)
       
       f ! PagedStorage.GetMetadata
       expectMsgType[PagedStorage.Metadata] should be (PagedStorage.Metadata(dataHeader.pageSize, PageIdx(1)))

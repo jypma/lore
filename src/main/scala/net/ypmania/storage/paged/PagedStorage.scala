@@ -72,6 +72,11 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     var writing = Map.empty[PageIdx, Any]
   
     def performWrite(write: Write, senders: Seq[ActorRef]) {
+      write.pageBytes.foreach { case (page, content) =>
+        if (content.length > journalHeader.pageSize) 
+        throw new Exception(s"Content length ${content.length} for page ${page} overflows page size ${journalHeader.pageSize}")
+      }
+      
       val journalEntry = JournalEntry(journalHeader, write.pageBytes)
       val content = journalEntry.toByteString
       journalFile ? FileActor.Write(journalPos, content) map {
@@ -108,7 +113,7 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
     context.become {
       case read:Read[_] =>
         log.debug("processing read {} for {}", read.page, sender)
-        writing.get(read.page).map { content =>
+        nextWrite.flatMap(_.pages.get(read.page).map(_.content)).orElse(writing.get(read.page)).map { content =>
           log.debug("Replying in-transit write content to {}", sender)
           sender ! ReadCompleted(content)
         }.getOrElse {
@@ -140,10 +145,6 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
         
       case write:Write =>
         //TODO also remove this page from freelist
-        write.pageBytes.foreach { case (page, content) =>
-          if (content.length > journalHeader.pageSize) 
-      	  throw new Exception(s"Content length ${content.length} for page ${page} overflows page size ${journalHeader.pageSize}")
-        }
 
         if (writing.isEmpty) {
           performWrite(write, Seq(sender))
@@ -151,12 +152,12 @@ class PagedStorage(filename: String) extends Actor with Stash with ActorLogging 
           nextWrite = nextWrite.map(w => MergeableWrite.merge(w, write)).orElse(Some(write))
           nextWriteSenders :+= sender
         }
+        sender ! WriteCompleted
         
       case GetMetadata =>
         sender ! Metadata(initial.dataHeader.pageSize, pageCount)
         
       case QueueEntryWritten(senders) =>
-        senders foreach { _ ! WriteCompleted }
         writing = Map.empty
         emptyWriteQueue()
         
