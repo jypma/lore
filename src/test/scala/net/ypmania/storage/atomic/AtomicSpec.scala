@@ -29,7 +29,7 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
   }
   
   "an atomic actor" should {
-    "forward a message with no other senders immediately, and forward back a reply" in new Fixture {
+    "forward a message with no atom immediately, and forward back a reply" in new Fixture {
       val msg1 = Message("Hello, world")
       actor ! Atomic(msg1)
       target.expectMsg(msg1)
@@ -37,12 +37,20 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       expectMsg("Hi")
     }
     
+    "forward a message with no other atoms immediately, and forward back a reply" in new Fixture {
+      val msg1 = Message("Hello, world")
+      actor ! Atomic(msg1, atom = Atom())
+      target.expectMsg(msg1)
+      target.reply("Hi")
+      expectMsg("Hi")
+    }
+    
     "preserve ordering for messages from one author, even if a later message could complete immediately" in new Fixture {
       val other = TestProbe()
-      val atom1 = Atom()
-      actor ! Atomic(Message("Hello, world"), Set(other.ref), atom1)
+      val atom1, atom2 = Atom()
+      actor ! Atomic(Message("Hello, world"), atom1, Set(atom2))
       actor ! Atomic(Message("Hello, moon"))
-      other.send(actor, Atomic(Message(Set("more!")), atom = atom1))
+      other.send(actor, Atomic(Message(Set("more!")), atom2, Set(atom1)))
       
       target.expectMsg(Message("Hello, world", "more!"))
       target.expectMsg(Message("Hello, moon"))
@@ -51,23 +59,21 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
     "hold on to a message if a collaborator has another message in progress" in new Fixture {
       val other = TestProbe()
       val third = TestProbe()
-      val atom1 = Atom()
-      val atom2 = Atom()
+      val atom1a, atom1b, atom2a, atom2b = Atom()
       
-      actor ! Atomic(Message("1A"), Set(other.ref), atom1)
-      other.send(actor, Atomic(Message("2A"), Set(third.ref), atom2))
-      other.send(actor, Atomic(Message("1B"), atom = atom1))
-      third.send(actor, Atomic(Message("2B"), atom = atom2))
+      actor ! Atomic(Message("1A"), atom1a, Set(atom1b))
+      other.send(actor, Atomic(Message("2A"), atom2a, Set(atom2b)))
+      other.send(actor, Atomic(Message("1B"), atom = atom1b))
+      third.send(actor, Atomic(Message("2B"), atom = atom2b))
       
       target.expectMsg(Message("2A", "2B"))
       target.expectMsg(Message("1A", "1B"))
 
-      val atom3 = Atom()
-      val atom4 = Atom()      
-      actor ! Atomic(Message("3A"), Set(other.ref), atom3)
-      other.send(actor, Atomic(Message("4A"), Set(third.ref), atom4))
-      other.send(actor, Atomic(Message("3B"), atom = atom3))
-      third.send(actor, Atomic(Message("4B"), atom = atom4))
+      val atom3a, atom3b, atom4a, atom4b = Atom()
+      actor ! Atomic(Message("3A"), atom3a, Set(atom3b))
+      other.send(actor, Atomic(Message("4A"), atom4a, Set(atom4b)))
+      other.send(actor, Atomic(Message("3B"), atom = atom3b))
+      third.send(actor, Atomic(Message("4B"), atom = atom4b))
       
       target.expectMsg(Message("4A", "4B"))
       target.expectMsg(Message("3A", "3B"))
@@ -75,9 +81,9 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
     
     "reply to all authors when a combined message gets a reply" in new Fixture {
       val other = TestProbe()
-      val atom1 = Atom()
-      actor ! Atomic(Message("1A"), Set(other.ref), atom1)
-      other.send(actor, Atomic(Message("1B"), atom = atom1))
+      val atom1a, atom1b = Atom()
+      actor ! Atomic(Message("1A"), atom1a, Set(atom1b))
+      other.send(actor, Atomic(Message("1B"), atom = atom1b))
       
       target.expectMsg(Message("1A", "1B"))
       target.reply("Hi")
@@ -88,12 +94,11 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
     
     "recognize a message deadlock by merging all messages involved" in new Fixture {
       val other = TestProbe()
-      val atom1 = Atom()
-      val atom2 = Atom()
-      actor ! Atomic(Message("1A"), Set(other.ref), atom1)
-      actor ! Atomic(Message("2A"), Set(other.ref), atom2)
-      other.send(actor, Atomic(Message("2B"), atom = atom2))
-      other.send(actor, Atomic(Message("1B"), atom = atom1))
+      val atom1a, atom1b, atom2a, atom2b = Atom()
+      actor ! Atomic(Message("1A"), atom1a, Set(atom1b))
+      actor ! Atomic(Message("2A"), atom2a, Set(atom2b))
+      other.send(actor, Atomic(Message("2B"), atom = atom2b))
+      other.send(actor, Atomic(Message("1B"), atom = atom1b))
       
       target.expectMsg(Message("1A","1B","2A","2B"))
       target.reply("Hi")
@@ -107,6 +112,20 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       target expectMsg "Hello"
       target reply "World"
       expectMsg("World")
+    }
+    
+    "release two senders blocking on the same atom" in new Fixture {
+      val atom1, atom2 = Atom()
+      val other = TestProbe()
+      actor ! Atomic(Message("Hello from spec"), atom1, Set(atom2))
+      other.send(actor, Atomic(Message("Hello from other"), atom1, Set(atom2)))
+      actor ! Atomic(Message("Releasing"), atom = atom2)
+      
+      target.expectMsg(Message("Hello from spec", "Hello from other", "Releasing"))
+      target.reply("Done")
+      
+      expectMsg("Done")
+      other.expectMsg("Done")
     }
   }
 }

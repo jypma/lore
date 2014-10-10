@@ -90,8 +90,9 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.key should be (BaseID(1,1,2))
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
-      write.atom should be (split.atom)
-      write.otherSenders should be (Set(workerParent.actor))
+      write.atom should be (split.otherAtoms.head)
+      write.otherAtoms.head should be (split.atom)
+
       val updatedLeft = write.msg.pages(PageIdx(0)).content.asInstanceOf[LeafBTreePage]
       updatedLeft.pointers should be (Map(BaseID(1,1,1) -> PageIdx(123)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[LeafBTreePage]
@@ -126,8 +127,9 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.key should be (BaseID(1,1,3))
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
-      write.atom should be (split.atom)
-      write.otherSenders should be (Set(workerParent.actor))
+      write.atom should be (split.otherAtoms.head)
+      write.otherAtoms.head should be (split.atom)
+      
       val updatedLeft = write.msg.pages(PageIdx(0)).content.asInstanceOf[LeafBTreePage]
       updatedLeft.pointers should be (Map(BaseID(1,1,2) -> PageIdx(123)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[LeafBTreePage]
@@ -184,8 +186,9 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       split.info.key should be (BaseID(1,1,3))
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
-      write.atom should be (split.atom)
-      write.otherSenders should be (Set(workerParent.actor))
+      write.atom should be (split.otherAtoms.head)
+      write.otherAtoms.head should be (split.atom)
+      
       val updatedLeft = write.msg.pages(PageIdx(0)).content.asInstanceOf[InternalBTreePage]
       updatedLeft.pointers should be (Map(BaseID(1,1,2) -> PageIdx(2)))
       val newRight = write.msg.pages(PageIdx(1)).content.asInstanceOf[InternalBTreePage]
@@ -206,12 +209,12 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
     "when receiving a Split, correctly update itself" in new Fixture {
       object StashMessage
       val stashSender = TestProbe()
-      val atom = AtomicActor.Atom()
-      worker ! ApplySplit(BTreePage.SplitResult(PageIdx(1), BaseID(1,1,5), PageIdx(2)), atom)
+      val atom1, atom2 = AtomicActor.Atom()
+      worker ! ApplySplit(BTreePage.SplitResult(PageIdx(1), BaseID(1,1,5), PageIdx(2)), atom1, Set(atom2))
       
       val write = pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
-      write.atom should be (atom)
-      write.otherSenders should be (Set(self))
+      write.atom should be (atom1)
+      write.otherAtoms should be (Set(atom2))
       val updated = write.msg.pages(PageIdx(0)).content.asInstanceOf[BTreePage]
       updated.pointers should be (Map(BaseID(1,1,5) -> PageIdx(1), BaseID(1,1,10) -> PageIdx(2), BaseID(1,1,30) -> PageIdx(3)))
       pagedStorage reply PagedStorage.WriteCompleted

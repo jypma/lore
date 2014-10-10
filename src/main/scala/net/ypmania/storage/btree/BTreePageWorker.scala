@@ -86,20 +86,20 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
           sender ! reply
       }
       
-    case ApplySplit(info, atom) =>
-      val updated = applySplit(page, info, atom)
+    case ApplySplit(info, atom, otherAtoms) =>
+      val updated = applySplit(page, info, atom, otherAtoms)
       context become active(updated)
       
     case PagedStorage.WriteCompleted =>
       log.debug("Ignoring a completed write.")
   }
   
-  private def applySplit(page: BTreePage, info: SplitResult, atom: Atom) = {
+  private def applySplit(page: BTreePage, info: SplitResult, atom: Atom, otherAtoms: Set[Atom]) = {
     log.debug("Applying split {} while on page {} with atom {} from {}", info, page, atom, sender)
     page match {
       case internal:InternalBTreePage if !internal.full =>
         val updated = internal.splice(info)
-        pagedStorage ! Atomic(PagedStorage.Write(pageIdx -> updated), atom = atom, otherSenders = Set(sender))
+        pagedStorage ! Atomic(PagedStorage.Write(pageIdx -> updated), atom, otherAtoms)
         updated
     }
   }
@@ -108,13 +108,13 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
     case PagedStorage.PageReserved(rightPageIdx) =>
       val (left, right, splitResult) = page.split(pageIdx, rightPageIdx)
       log.debug("Got reservation for new right page {}, splitting into {}", rightPageIdx, splitResult)
-      val atom = Atom()
+      val atom1, atom2 = Atom()
       pagedStorage ! Atomic(
           PagedStorage.Write(pageIdx -> left) + (rightPageIdx -> right),
-          otherSenders = Set(context.parent),
-          atom = atom)
+          otherAtoms = Set(atom2),
+          atom = atom1)
       log.debug("Sending ApplySplit to {}", context.parent)
-      context.parent ! ApplySplit(splitResult, atom)
+      context.parent ! ApplySplit(splitResult, atom2, Set(atom1))
       context become awaitingSplitCompletion(left, context.parent)
       
     case other =>
@@ -131,8 +131,8 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
                                         (rightPageIdx -> right))
       context become awaitingSplitCompletion(newRoot, self) 
       
-    case ApplySplit(info, atom) =>
-      val updated = applySplit(page, info, atom)
+    case ApplySplit(info, atom, otherAtoms) =>
+      val updated = applySplit(page, info, atom, otherAtoms)
       context become reservingForRootSplit(updated)
       
     case PagedStorage.WriteCompleted =>

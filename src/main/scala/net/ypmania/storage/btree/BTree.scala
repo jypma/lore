@@ -52,7 +52,7 @@ object BTree {
     Props(new BTree(pagedStorage, rootPageIdx))
   
   private[btree] case class ToChild[T](page: PageIdx, msg:T)
-  private[btree] case class ApplySplit(info: BTreePage.SplitResult, atom: Atom)
+  private[btree] case class ApplySplit(info: BTreePage.SplitResult, atom: Atom, otherAtoms: Set[Atom])
     
   trait Keyed {
     def key: ID

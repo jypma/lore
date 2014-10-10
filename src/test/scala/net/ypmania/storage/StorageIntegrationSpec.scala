@@ -88,32 +88,5 @@ class StorageIntegrationSpec extends TestKit(ActorSystem("Test")) with ImplicitS
       tree2 ! BTree.Get(BaseID(1,1,4))
       expectMsg(BTree.Found(PageIdx(104)))
     }
-  }
-  
-  "A BTree with lots of nodes added in parallel" should {
-    trait Fixture extends BaseFixture {
-      override def settings = BTree.Settings(order = 2500)
-      val count = 10000
-      val entries = (0 until count).map(i => (BaseID(1,1,Math.abs(Random.nextInt())), PageIdx(i))).toMap
-      
-      val start = System.currentTimeMillis()
-      for ((id, idx) <- entries) {
-        tree ! BTree.Put(id, idx)
-      }
-      within(timeout) {
-        for ((id, idx) <- entries) {
-          expectMsg(BTree.PutCompleted)        
-        }        
-      }
-      val ms = System.currentTimeMillis() - start
-      println(s"Took ${ms}ms to write ${count} to ${filename}, ${ms.toFloat / count}ms per entry")
-    }    
-    
-    "remember them while still in memory" in new Fixture {
-      for ((id, idx) <- entries) {
-        tree ! BTree.Get(id)
-        expectMsg(BTree.Found(idx))        
-      }
-    }
-  } 
+  }  
 }
