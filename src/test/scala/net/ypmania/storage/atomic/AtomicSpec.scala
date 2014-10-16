@@ -9,9 +9,12 @@ import akka.actor.ActorSystem
 import akka.testkit.TestProbe
 import akka.actor.Props
 import scala.concurrent.duration._
+import akka.actor.Status.Failure
+import net.ypmania.test.ExtraMatchers
+import akka.pattern.AskTimeoutException
 
 class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
-                    with WordSpecLike with Matchers with Eventually {
+                    with WordSpecLike with Matchers with ExtraMatchers with Eventually {
   import AtomicActor._
   
   case class Message(s: Set[String]) 
@@ -24,7 +27,7 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
   
   class Fixture {
     val target = TestProbe()
-    val timeout = 2.seconds
+    val timeout = 1.second
     val actor = system.actorOf(Props(new AtomicActor(target.ref, timeout)))
   }
   
@@ -126,6 +129,33 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       
       expectMsg("Done")
       other.expectMsg("Done")
+    }
+    
+    "time out if an expected atom for a blocked message never arrives" in new Fixture {
+      val atom1, atom2 = Atom()
+      actor ! Atomic(Message("Hello"), atom1, Set(atom2))
+
+      // We don't send anything with atom2 on it, so the above message should time out.
+      val failed = expectMsgType[Failure]
+      failed.cause should (beOfType[AskTimeoutException])
+      
+      // If the second message finally arrives but too late, it's OK that we have forgotten
+      // about atom1 by now, so this is expected to time out as well.
+      actor ! Atomic(Message("World"), atom2, Set(atom1))
+      expectMsgType[Failure]
+    }
+    
+    "normally complete a message that was blocked to preserve ordering, if a previous message times out" in new Fixture {
+      val other = TestProbe()
+      val atom1, atom2 = Atom()
+      actor ! Atomic(Message("Hello, world"), atom1, Set(atom2))
+      actor ! Atomic(Message("Hello, moon"))
+      
+      // We don't send anything with atom2 on it, so the above message should time out.
+      val failed = expectMsgType[Failure]
+      
+      // But afterwards, the second message should be delivered normally.
+      target.expectMsg(Message("Hello, moon"))
     }
   }
 }

@@ -8,12 +8,19 @@ import akka.pattern.pipe
 import java.util.concurrent.atomic.AtomicLong
 import akka.util.Timeout
 import akka.actor.Terminated
+import akka.actor.Cancellable
+import scala.concurrent.duration.Deadline
+import akka.actor.Status.Failure
+import akka.pattern.AskTimeoutException
 
 class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor with ActorLogging {
   import AtomicActor._
+  import context.dispatcher
+  
   private val messages = collection.mutable.Map.empty[Atom,QueuedMessage[_]]
   private val latestForActor = collection.mutable.Map.empty[ActorRef,Atom]
   private val watchedSenders = collection.mutable.Set.empty[ActorRef]
+  private val expirations = collection.mutable.Map.empty[Atom,Cancellable] 
   
   def receive = {
     case atomic:Atomic[_] =>
@@ -28,11 +35,11 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
     	  val msg = messages.values.find(_.isExpecting(atomic.atom)) match {
     	    case Some(waitingForCurrent) =>
     	      log.debug("Found msg {} which is awaiting current atom {}, merging them.", waitingForCurrent, atomic.atom)
-    	      save(waitingForCurrent.merge(atomic, sender))
+    	      save(waitingForCurrent.merge(atomic, sender, timeout.duration.fromNow))
     	        
     	    case None =>
     	      log.debug("No msg is awaiting current atom {}", atomic.atom)
-    	      atomic.queue(sender)
+    	      atomic.queue(sender, timeout.duration.fromNow)
     	  }
     	  
     	  val msgWithPrev = latestForActor.get(sender) match {
@@ -52,7 +59,7 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
 	      } 
       } else {
         log.debug("Already waiting on some of {}: {}", atomic.otherAtoms, waitingOnSameAtoms)
-        val merged = waitingOnSameAtoms.reduce { (a,b) => a.merge(b) }.merge(atomic, sender)
+        val merged = waitingOnSameAtoms.reduce { (a,b) => a.merge(b) }.merge(atomic, sender, timeout.duration.fromNow)
         for (atom <- merged.received) {
           messages(atom) = merged
         }
@@ -70,10 +77,20 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
     case Terminated(client) =>
       latestForActor.remove(client)
       watchedSenders.remove(client)
+
+    case Expired(atom) =>
+      log.warning("Atom {} has timed out", atom)
+      messages.get(atom).foreach(expire)
       
     case other =>
-      import context.dispatcher
-      target ? other pipeTo sender
+      target.tell(other, sender)
+  }
+  
+  private def expire(msg: QueuedMessage[_]): Unit = {
+    val reply = Failure(new AskTimeoutException("Deadline expired for atomic message " + msg))
+    for (client <- msg.clients) client ! reply
+    delete(msg)
+    msg.next.foreach(finishNext)
   }
   
   private def watchSender():Unit = {
@@ -85,8 +102,18 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
   
   private def save(msg: QueuedMessage[_]) = {
     assume((msg.received & msg.expecting).isEmpty)
+
+    cancelExpiration(msg)
+    val atom = msg.received.head
+    if (msg.deadline.hasTimeLeft) {
+      expirations(atom) =  context.system.scheduler.scheduleOnce(msg.deadline.timeLeft, self, Expired(atom))
+    } else {
+      self ! Expired(atom)
+    }
+    for (atom <- msg.received) { 
+      messages(atom) = msg 
+    }
     
-    for (atom <- msg.received) { messages(atom) = msg }
     msg
   }
   
@@ -110,18 +137,27 @@ class AtomicActor(target: ActorRef, implicit val timeout: Timeout) extends Actor
     }
   }
   
+  private def cancelExpiration(msg: QueuedMessage[_]): Unit = {
+    for (atom <- msg.received; x <- expirations.get(atom)) {
+      x.cancel()
+    }
+  }
+
+  private def finishNext(atom: Atom): Unit = {
+    log.debug("Unblocking next message atom {}", atom)
+    val msg = save(messages(atom).unblocked)
+    if (msg.canFinish) finish(msg)    
+  }
+  
   private def finish(msg: QueuedMessage[_]): Unit = {
     log.debug("Finishing {}", msg)
     
+    cancelExpiration(msg)
     import context.dispatcher
     target ? msg.msg map { Reply(msg.clients, _) } pipeTo self
     delete(msg)
     
-    for (next <- msg.next) {
-      log.debug("Unblocking next message atom {}", next)
-      val msg = save(messages(next).unblocked)
-      if (msg.canFinish) finish(msg)
-    }
+    msg.next.foreach(finishNext)
   }
 
   private def delete(msg: QueuedMessage[_]) = {
@@ -146,8 +182,8 @@ object AtomicActor {
   }
   
   case class Atomic[T : Mergeable] (msg: T, atom: Atom = Atom(), otherAtoms: Set[Atom] = Set.empty) {
-    private[AtomicActor] def queue(sender: ActorRef) = 
-      QueuedMessage(msg, Set(atom), otherAtoms, Seq.empty, false, Set(sender))
+    private[AtomicActor] def queue(sender: ActorRef, deadline: Deadline) = 
+      QueuedMessage(msg, Set(atom), otherAtoms, Seq.empty, false, Set(sender), deadline)
   }
   
   private case class QueuedMessage[T : Mergeable](
@@ -156,12 +192,14 @@ object AtomicActor {
       expecting: Set[Atom], 
       next: Seq[Atom], 
       blockedByPrevious: Boolean,
-      clients: Set[ActorRef]) {
-    def merge(other: Atomic[_], sender: ActorRef) = copy(
+      clients: Set[ActorRef],
+      deadline: Deadline) {
+    def merge(other: Atomic[_], sender: ActorRef, otherDeadline: Deadline) = copy(
         msg = implicitly[Mergeable[T]].merge(msg, other.msg.asInstanceOf[T]), 
         received = received + other.atom,
         expecting = other.otherAtoms ++ expecting -- received - other.atom,
-        clients = clients + sender)
+        clients = clients + sender,
+        deadline = if (deadline > otherDeadline) deadline else otherDeadline)
     def merge(other: QueuedMessage[_]): QueuedMessage[T] = {
       copy(
         msg = implicitly[Mergeable[T]].merge(msg, other.msg.asInstanceOf[T]),
@@ -169,18 +207,18 @@ object AtomicActor {
         expecting = expecting ++ other.expecting -- other.received,
         blockedByPrevious = blockedByPrevious || other.blockedByPrevious,
         next = next.filter(atom => !other.received.contains(atom)) ++ other.next.filter(atom => !received.contains(atom)),
-        clients = clients ++ other.clients)
+        clients = clients ++ other.clients,
+        deadline = if (deadline > other.deadline) deadline else other.deadline)
     }
     def isExpectingAny(atoms: Set[Atom]) = !(expecting & atoms).isEmpty 
     def isExpecting(atom: Atom) = expecting.contains(atom)
     def blocked = copy(blockedByPrevious = true)
     def unblocked = copy(blockedByPrevious = false)
     def andThen(a: Atom) = copy(next = next :+ a)
-    //def after(a: Atom) = copy(prev = prev + a)
-    //def afterFinished(a: Atom) = copy(prev = prev - a)
-    //def independently = copy(prev = Set.empty, next = Set.empty)
     def canFinish = expecting.isEmpty && !blockedByPrevious
   }
   
   private case class Reply(clients: Set[ActorRef], msg: Any)
+  
+  private case class Expired(atom: Atom)
 }
