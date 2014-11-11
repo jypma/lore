@@ -20,6 +20,7 @@ import akka.pattern.pipe
 import akka.util.Timeout
 import scala.concurrent.duration._
 import com.typesafe.scalalogging.StrictLogging
+import akka.actor.Status.Failure
 
 class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, isRoot: Boolean)
                      (implicit val settings: BTree.Settings) 
@@ -33,6 +34,12 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   log.debug("Starting worker for page {}", pageIdx)
   pagedStorage ! PagedStorage.Read[BTreePage](pageIdx)
   
+  private val stopOnFailure: Receive = {
+    case Failure(x) =>
+      log.warning("Received failure, terminating.", x)
+      context.stop(self)
+  }
+  
   def receive = {
     case PagedStorage.ReadCompleted(page: BTreePage) =>
       log.debug("Page {} received as {}", pageIdx, page)
@@ -43,7 +50,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
   }
   
   // Only during split do internal nodes grow
-  def active(page: BTreePage): Receive = {
+  def active(page: BTreePage): Receive = stopOnFailure.orElse {
     case msg @ Put(key, value) =>
       log.debug("Received Put while at size {} of {}", page.size, settings.entriesPerPage)
       if (page.full) {
@@ -104,7 +111,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
     }
   }
   
-  def reservingForSplit(page: BTreePage): Receive = {
+  def reservingForSplit(page: BTreePage): Receive = stopOnFailure.orElse {
     case PagedStorage.PageReserved(rightPageIdx) =>
       val (left, right, splitResult) = page.split(pageIdx, rightPageIdx)
       log.debug("Got reservation for new right page {}, splitting into {}", rightPageIdx, splitResult)
@@ -122,7 +129,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       stash()
   }
   
-  def reservingForRootSplit(page: BTreePage): Receive = {
+  def reservingForRootSplit(page: BTreePage): Receive = stopOnFailure.orElse {
     case PagedStorage.PagesReserved(leftPageIdx :: rightPageIdx :: Nil) =>
       val (left, right, splitResult) = page.split(leftPageIdx, rightPageIdx)
       val newRoot = splitResult.asRoot
@@ -143,7 +150,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       stash()
   }
   
-  def awaitingSplitCompletion(newPage:BTreePage, redeliverTarget: ActorRef): Receive = {
+  def awaitingSplitCompletion(newPage:BTreePage, redeliverTarget: ActorRef): Receive = stopOnFailure.orElse {
     case PagedStorage.WriteCompleted =>
       // From now on, it is safe to send pre-split messages back to the parent for re-routing.
       // Additionally, from now on, we won't get any wrongly routed messages anymore.
@@ -156,7 +163,7 @@ class BTreePageWorker private[btree] (pagedStorage: ActorRef, pageIdx: PageIdx, 
       stash()
   }
   
-  def redeliveringForSplit(newPage: BTreePage, target: ActorRef): Receive = {
+  def redeliveringForSplit(newPage: BTreePage, target: ActorRef): Receive = stopOnFailure.orElse {
     case RedeliverForSplitCompleted =>
       log.debug("Redeliveries done, completing split")
       context become active(newPage)

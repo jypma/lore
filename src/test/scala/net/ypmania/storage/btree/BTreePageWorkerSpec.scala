@@ -1,22 +1,23 @@
 package net.ypmania.storage.btree
 
-import akka.testkit.TestKit
-import akka.testkit.ImplicitSender
+import scala.collection.immutable.TreeMap
+import scala.concurrent.duration._
+
 import org.scalatest.Matchers
 import org.scalatest.WordSpecLike
+
 import akka.actor.ActorSystem
-import scala.util.Random
-import akka.testkit.TestProbe
-import akka.testkit.TestActorRef
 import akka.actor.Props
-import net.ypmania.storage.paged.PageIdx
+import akka.actor.Status.Failure
+import akka.pattern.AskTimeoutException
+import akka.testkit.ImplicitSender
+
+import akka.testkit.TestKit
+import akka.testkit.TestProbe
 import net.ypmania.lore.BaseID
-import net.ypmania.storage.paged.PagedStorage
 import net.ypmania.storage.atomic.AtomicActor
-import akka.actor.Actor
-import akka.actor.ActorRef
-import akka.dispatch.Envelope
-import scala.collection.immutable.TreeMap
+import net.ypmania.storage.paged.PageIdx
+import net.ypmania.storage.paged.PagedStorage
 import net.ypmania.test.ParentingTestProbe
 
 class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSender 
@@ -138,6 +139,20 @@ class BTreePageWorkerSpec extends TestKit(ActorSystem("Test")) with ImplicitSend
       
       // The original put message is sent back to the parent for redelivery (it might need to have gone to the new node)
       workerParent.expectMsg(putMsg)
+    }
+    
+    "die if it receives a failure response to an atomic write" in new Fixture {
+      val putMsg = BTree.Put(BaseID(1,1,1), PageIdx(123))
+      worker ! putMsg
+      
+      pagedStorage.expectMsg(PagedStorage.ReservePage) 
+      pagedStorage.reply(PagedStorage.PageReserved(PageIdx(1)))
+
+      pagedStorage.expectMsgType[AtomicActor.Atomic[PagedStorage.Write]]
+      
+      watch(worker)
+      pagedStorage.reply(Failure(new AskTimeoutException("Simulating deadline expiration for write")))
+      expectTerminated(worker, 1.second)
     }
     
     "forward stashed messages designated for the new child node during a split" in new Fixture {

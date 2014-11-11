@@ -17,6 +17,7 @@ import net.ypmania.lore.BaseID
 
 class StoragePerformanceSpec  extends TestKit(ActorSystem("Test")) with ImplicitSender 
                        with WordSpecLike with Matchers with Eventually {
+  /*
   trait BaseFixture {
     implicit def settings = BTree.Settings(order = 2)
     val randomInt = Random.nextInt
@@ -53,4 +54,6 @@ class StoragePerformanceSpec  extends TestKit(ActorSystem("Test")) with Implicit
       }
     }
   }
+  * /
+  */
 }

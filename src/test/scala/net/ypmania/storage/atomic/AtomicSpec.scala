@@ -149,6 +149,7 @@ class AtomicSpec extends TestKit(ActorSystem("Test")) with ImplicitSender
       val other = TestProbe()
       val atom1, atom2 = Atom()
       actor ! Atomic(Message("Hello, world"), atom1, Set(atom2))
+      Thread.sleep(timeout.toMillis / 2)
       actor ! Atomic(Message("Hello, moon"))
       
       // We don't send anything with atom2 on it, so the above message should time out.
